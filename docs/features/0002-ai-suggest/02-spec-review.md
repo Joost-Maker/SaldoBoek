@@ -91,4 +91,34 @@ N2 (`:49`), N3 → Decision 6 (`:125`), N4 seed-rule deletion (`:38`), N5 (`:60`
 - **N16, enum hygiene:** remove `Ongecategoriseerd` from the allowed enum if a user happens to have a category row with that name (it isn't in `categories.yaml`, but the GUI can create categories). A proposal of "Ongecategoriseerd" is not a proposal. Also take the few-shot rows only from transactions whose `categorie` is neither NULL nor `Ongecategoriseerd`.
 - **N17, cosmetic:** the Decisions list is numbered 1, 2, 3, 4, 6, 7, 8, 5 (`:120-128`). GPU-guard step 2b (`:48`) lists the messages before the procedure and repeats "not found → exit 3". Tidy both when writing the implementation log, so that the code gate can cite decisions by number without confusion.
 
+*Rev 2 outcome: approved with notes. The verdict line was moved to the end of the file, after the re-review below.*
+
+---
+
+## Re-review (spec rev 3 — PO amendment)
+
+**Gate:** spec mode, amendment re-review · **Scope:** only whether rev 3 implements the PO amendment (`00-brief.md`, final section) correctly and completely, and stays consistent with the rest of the brief and spec · **Reviewed:** `00-brief.md` (with the amendment), `01-spec.md` rev 3, `06-fixes.md`, `tools/ai_suggest/{rules,__main__,prompt}.py`, `tools/ai_common/grouping.py`, `tests/ai_suggest/{test_rules,test_flow}.py`, `saldoboek/core/database.py:117-125`, `saldoboek/core/categorization.py:12-47` · **Date:** 2026-09-18
+
+### Zoekterm rule: correct and complete
+
+- **Named groups** (`01-spec.md:33`): `naam.strip()` ≥ 4 chars → zoekterm = `naam.strip().lower()`, digits allowed, model term ignored. This matches the amendment exactly. **Substring claim verified:** `build_groups` sets `g["naam"] = (tx.naam or "").strip()` (`__main__.py:67`), and every transaction in the group has the same `group_key` = that value lowercased (`grouping.py:10-15`). `rule_text` is `f"{naam} {omschrijving}".lower()` over the raw name (`grouping.py:23-25`), so the stripped, lowercased name is always a substring of every group text. It's also the same text SaldoBoek matches on (`categorization.py:42-47`). The stored rule will therefore match the group, so no validation step is needed on this branch.
+- **Nameless and short-name groups:** the model term goes through the original `validate_zoekterm` (≥ 4, no digits, substring of every text). If it fails, the zoekterm is empty and flagged `zoekterm ongeldig`. Dropping the old naam fallback is correct, because the name was already the first choice. For the builder: the current `choose_zoekterm` (`rules.py:26-34`) calls `validate_zoekterm(naam, …)`, which **rejects names with digits**, so the naam branch must not go through it. The spec says this explicitly ("digits allowed").
+- **Schema/prompt:** the brief's model-call FR still names `{categorie, zoekterm, zekerheid}`, and nameless groups still need the model term. Keeping the schema unchanged is consistent. Prompt wording is delegated.
+
+### AC4 and AC6 as amended: mapped and testable
+
+- **AC4** (`01-spec.md:93`): all three amended cases are covered (`test_naam_always_wins`, `test_nameless_invalid_model_term`, `test_nameless_valid_model_term`). The spec adds a 1–3-char-name case (`test_short_naam_uses_model_term`), which is required by the amended FR, and an end-to-end case (`test_generic_model_term_replaced_by_naam`).
+- **AC6** (`01-spec.md:95`): the exact string `botsing: 1 transacties in Auto` follows from the unchanged `collision_flag` (`rules.py:49-56`) with term `test garage` over `Test Garage Onderdelen` in `Auto`. The group's own transactions are uncategorised and don't count, so the count is exactly 1.
+- **Consistency with the other checks:** the shadow check works on group texts, not on the zoekterm (`rules.py:59-64`), so it's unaffected. The collision check now runs on the name-derived term, which is what the amendment's AC6 relies on. The CSV `zoekterm` column and header are unchanged (AC11 holds). For named groups, `zoekterm` now equals `sleutel`. That fits the apply item, which finds a group by `sleutel` and writes the rule from `zoekterm`.
+- **Creep:** none. **Open questions:** none (`01-spec.md` "(none)"). **Revision budget:** rev 3 is the last allowed cycle, and nothing here needs another one.
+
+### Notes for the builder (no revision needed)
+
+- **N18, the AC6 test must be rewritten, not relaxed.** The current `test_flow.py::test_collision_flag` (`:91-98`) relies on model term `test` for `Test Bakker`. Under rev 3 the zoekterm becomes `test bakker` and the flag disappears. Replace the fixture with the amended AC6 (uncategorised `Test Garage` group, categorised `Test Garage Onderdelen` in `Auto`, model says `Boodschappen`) and assert the exact string. Also rename or supersede `test_digits_zoekterm_falls_back` (`test_flow.py:82`), whose name describes the removed fallback, and `test_rules.py::test_digits_fall_back_to_naam` / `::test_invalid_when_fallback_fails`. Add one **end-to-end** nameless group (empty `naam`, so the key is the `omschrijving`) to `test_flow.py`. That proves the `g["naam"] == ""` path reaches the model-term branch, and not only in unit tests.
+- **N19, stale wording.** "High-stakes output impact" (`01-spec.md:110`) and the mapping row "FR zoekterm validation + fallback" (`:83`) still describe ≥ 4 / no digits / fallback for every zoekterm. Record the name-first rule in the implementation log so that the code gate isn't reading two rules.
+- **N20, blank rows stay blank.** On `model-fout` or `geen categorieën voor <type>`, keep `zoekterm` empty (spec step 7, "blank the proposal"), even though the name is known. A rule without a category has nothing to approve.
+- **N21, for the sign-off and 0003, not this build: mixed-sign counterparties now always produce duplicate zoektermen.** A named counterparty with both positive and negative uncategorised transactions (e.g. a webshop refund) becomes two groups (FR mixed-sign split). Under rev 3 both groups get the **same** zoekterm, and usually an inkomsten and an uitgaven category. The collision check doesn't flag this, because the other group is still uncategorised. `categorisatie_regels` has `UNIQUE(zoekterm, gebruiker_id)` (`database.py:125`), and SaldoBoek rules ignore sign (`categorization.py:42-47`), so at most one of the two can become a rule. Backlog E1 (`06-fixes.md`) already lists "same term proposed for different categories"; the amendment makes it systematic for every mixed-sign name. Mention it in the sign-off so that the 0003 brief handles it. A cheap informational flag (e.g. `zelfde zoekterm als groep <n>`) is allowed under the delegated flag strings, but it isn't required here.
+
+*Rev 3 outcome: approved with notes (N18–N21).*
+
 Verdict: approved with notes
