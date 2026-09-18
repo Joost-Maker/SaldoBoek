@@ -40,7 +40,7 @@ class ImportViewModel(QObject):
         self._service = transaction_service
         self._gebruiker_id = None
         self._selected_files = []
-        self._bank_type = "auto"  # auto, rabobank, sns
+        self._bank_type = "auto"  # auto, rabobank, sns, knab
         self._account_type = "betaalrekening"  # betaalrekening, spaarrekening
 
     def set_gebruiker_id(self, gebruiker_id: int) -> None:

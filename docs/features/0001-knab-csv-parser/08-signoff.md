@@ -55,3 +55,7 @@ Round 1's second 🟠 (E-1, duplicate key) is pre-existing importer behaviour. *
 7. Already filed: E-1 duplicate key → DEV item "SaldoBoek duplicate check drops genuine identical transactions".
 
 **Upstream PR, when you're ready:** branch off `upstream/main`, cherry-pick only `saldoboek/`, `tests/` (conftest, `__init__`, the two Knab test files, and `test_smoke.py` if you want it upstream) and `README.md`. Never `CLAUDE.md`, `AGENTS.md`, `docs/`, `queue/`, `scripts/` or `.claude/`.
+
+## Post-sign-off addition (PO request, 2026-09-18)
+
+Joost's GUI check showed Knab missing from the import view's bank dropdown. At his request, "Knab" was added to `saldoboek/gui/views/import_view.py` (plus the matching comment in `import_viewmodel.py`). This is a display-only list: the selection is never wired to the importer (`set_bank_type` is never called), so detection stays automatic, as for Rabo/SNS. The brief had the GUI out of scope; the PO explicitly widened it for this one line. Tests: unchanged, 26 passed (no GUI tests; PySide6 isn't in the test venv).

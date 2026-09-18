@@ -76,7 +76,7 @@ class ImportView(QWidget):
         bank_layout.addWidget(bank_label)
         self._bank_combo = QComboBox()
         self._bank_combo.setObjectName("bank_combo")
-        self._bank_combo.addItems(["Auto-detecteren", "Rabobank", "SNS Bank"])
+        self._bank_combo.addItems(["Auto-detecteren", "Rabobank", "SNS Bank", "Knab"])
         bank_layout.addWidget(self._bank_combo)
         bank_layout.addStretch()
         file_layout.addLayout(bank_layout)
