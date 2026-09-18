@@ -38,3 +38,16 @@ Removed as obsolete (they described the dropped fall-back): `test_rules.py::test
 Noted for the sign-off and the 0003 brief (N20/N21): rows marked `model-fout` or `geen categorieën` keep the zoekterm blank. A counterparty with both income and expense rows gives two rows with the **same** zoekterm, but `categorisatie_regels` is `UNIQUE(zoekterm, gebruiker_id)`, so at most one can become a rule.
 
 Test command after round 1b: `.venv/bin/python -m pytest -q` → green (60 passed).
+
+## Round 2: code gate review 1 (changes requested)
+
+| Required change | Fix | Files | Regression test |
+|---|---|---|---|
+| 1. IBANs reached the prompt when padded (double space, tab, NBSP) or glued (`IBANNL…`) | Collapse whitespace **before** masking; the pattern has no leading word boundary and allows one space/dot/dash between characters | `tools/ai_suggest/prompt.py` | `test_flow.py::test_no_iban_in_requests_padded_and_glued` (incl. a few-shot row) |
+| 2. `categorie IS NULL` was grouped and sent to the model (undocumented deviation) | Input restricted to `categorie == 'Ongecategoriseerd'`, as in the brief. NULL still doesn't count as a collision (N5). 0003 must look groups up with the same `UNCATEGORIZED` constant from `tools/ai_common` | `tools/ai_suggest/__main__.py` | `test_flow.py::test_null_category_not_grouped` |
+| 3. A link at `<out>.tmp` could overwrite the DB (bug hunt R2-1) | The temp file comes from `tempfile.mkstemp` in the output directory (O_EXCL, fresh name), then `os.replace`; it's cleaned up on error. Side effect: the review CSV is mode 0600, which is right because it holds bank data | `tools/ai_suggest/review.py` | `test_io.py::test_tmp_symlink_to_db_cannot_overwrite`, `::test_review_file_is_private` |
+| 4. `04-test-protocol.md` was stale | Updated to the amended AC4/AC6, case 2.1, the high-stakes rows, spec rev 3, and the new tests | `docs/features/0002-ai-suggest/04-test-protocol.md` | — |
+
+Mutation check: with the old `prompt.py` and `review.py` restored, both new tests fail (2 failed); with the fixes, green.
+
+Test command after round 2: `.venv/bin/python -m pytest -q` → green (64 passed).

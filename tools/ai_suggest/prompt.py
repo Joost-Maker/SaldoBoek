@@ -8,8 +8,10 @@ MAX_FEWSHOT = 15
 MAX_SAMPLES = 3
 MAX_TEXT = 120
 
-# IBAN, ook met spaties of in kleine letters: 2 letters, 2 cijfers, 11-30 alfanumeriek
-IBAN_RE = re.compile(r"\b[A-Z]{2} ?\d{2}(?: ?[A-Z0-9]){11,30}\b", re.IGNORECASE)
+# IBAN in elke vorm die na het samenvouwen van witruimte overblijft: 2 letters,
+# 2 cijfers, dan 11-30 alfanumeriek, met hooguit één spatie/punt/streepje ertussen.
+# Geen woordgrens vooraan, zodat ook een vastgeplakt 'IBANNL00…' gevonden wordt.
+IBAN_RE = re.compile(r"[A-Z]{2}[ .\-]?\d{2}(?:[ .\-]?[A-Z0-9]){11,30}", re.IGNORECASE)
 
 SYSTEM_PROMPT = (
     "Je categoriseert Nederlandse banktransacties voor een huishoudboekje.\n"
@@ -23,9 +25,13 @@ SYSTEM_PROMPT = (
 
 
 def scrub(text):
-    """Vervang IBAN's door [IBAN] en kort lange teksten in."""
-    text = IBAN_RE.sub("[IBAN]", str(text or ""))
-    text = " ".join(text.split())
+    """Vervang IBAN's door [IBAN] en kort lange teksten in.
+
+    Eerst witruimte (tabs, dubbele spaties, NBSP) samenvouwen, dan maskeren:
+    andersom zou een IBAN met rare witruimte het patroon ontlopen.
+    """
+    text = " ".join(str(text or "").split())
+    text = IBAN_RE.sub("[IBAN]", text)
     if len(text) > MAX_TEXT:
         text = text[: MAX_TEXT - 1] + "…"
     return text

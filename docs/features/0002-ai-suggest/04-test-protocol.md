@@ -1,7 +1,8 @@
 # Test Protocol
 **Date (UTC):** 2026-09-18T12:30:00Z
 **Feature:** AI suggest: GPU category + rule proposals (0002-ai-suggest)
-**Brief ref:** 00-brief.md · **Spec ref:** 01-spec.md (rev 2)
+**Brief ref:** 00-brief.md (incl. PO amendment) · **Spec ref:** 01-spec.md (rev 3)
+**Updated:** 2026-09-18 after code gate review 1 (PO amendment, IBAN/temp-file/NULL fixes)
 **Scope:** New fork-only CLI `python -m tools.ai_suggest` (read-only DB, local LLM on the eGPU, review CSV).
 **Dependencies:** repo venv `.venv/bin/python`. For the **real-GPU case (section 5)**: the llama-server router on `127.0.0.1:6767` (systemd, already running), the eGPU attached, and the API key in env `AI_SUGGEST_API_KEY` (the tester is given the value; it's never written into the repo).
 
@@ -16,18 +17,20 @@
 | AC1: 5 tx / 2 counterparties → 2 calls, rows 3 and 2 | `tests/ai_suggest/test_flow.py::test_two_groups_two_calls` | 1.1 |
 | AC2: invented category / free text → `model-fout` | `test_flow.py::test_model_error_flag` | 1.4 |
 | AC3: enum limited by sign | `test_flow.py::test_enum_by_sign`, `::test_mixed_sign_split` | 1.2 |
-| AC4: digits in zoekterm → fallback to naam, else `zoekterm ongeldig` | `test_rules.py::test_digits_fall_back_to_naam`, `::test_invalid_when_fallback_fails`, `test_flow.py::test_digits_zoekterm_falls_back` | 2.1 |
+| AC4 (amended): named group → full name (`woning` → `test woonstichting`); empty name + `abonr.4163` → `zoekterm ongeldig`; empty name + valid `maandhuur` → `maandhuur` | `test_rules.py::test_naam_always_wins`, `::test_naam_with_digits_allowed`, `::test_nameless_invalid_model_term`, `::test_nameless_valid_model_term`, `::test_short_naam_uses_model_term`; `test_flow.py::test_generic_model_term_replaced_by_naam`, `::test_nameless_group_uses_valid_model_term` | 2.1 |
 | AC5: `sleutel` = shared helper | `test_flow.py::test_sleutel_matches_helper` | 1.1 |
-| AC6: `test` vs `Test Garage` in `Auto` → `botsing` | `test_flow.py::test_collision_flag`, `test_rules.py::test_collision_counts_other_categories_only` | 2.2 |
+| AC6 (amended): group `Test Garage` vs `Test Garage Onderdelen` in `Auto` → `botsing: 1 transacties in Auto` | `test_flow.py::test_collision_flag`, `test_rules.py::test_collision_counts_other_categories_only` | 2.2 |
 | AC7: rule `bakker` → `al gedekt door regel 'bakker'` | `test_flow.py::test_shadow_flag`, `test_rules.py::test_shadow_uses_first_rule_in_order` | 2.3 |
 | AC8: no eGPU → exit 2, 0 requests | `test_gpu.py::test_no_egpu_exit_2_no_requests` | 3.1 |
 | AC9: VRAM < 4 GiB after the first call → exit 3 | `test_gpu.py::test_card_vram_low_exit_3`, `::test_model_process_vram_low_exit_3` (+ `::test_model_process_not_found_exit_3`, `::test_fdinfo_unreadable_exit_3`) | 3.2 |
-| AC10: DB SHA-256 unchanged, `mode=ro` | `test_io.py::test_db_hash_unchanged`, `::test_connection_is_readonly` | 4.1 |
+| AC10: DB SHA-256 unchanged, `mode=ro` | `test_io.py::test_db_hash_unchanged`, `::test_connection_is_readonly`, `::test_out_equal_to_db_refused`, `::test_out_via_symlink_to_db_refused`, `::test_out_must_be_csv`, `::test_tmp_symlink_to_db_cannot_overwrite` | 4.1 |
 | AC11: CSV header exact, `akkoord` empty | `test_io.py::test_header_and_empty_akkoord` | 4.2 |
 | AC12: 4 failures → abort + partial file | `test_flow.py::test_abort_after_four_failures_writes_partial` | 1.5 |
-| AC13: no IBAN in request bodies | `test_flow.py::test_no_iban_in_requests` | 2.4 |
+| AC13: no IBAN in request bodies | `test_flow.py::test_no_iban_in_requests`, `::test_no_iban_in_requests_padded_and_glued` (double space, tab, NBSP, dashes, dots, glued `IBANNL…`, also in a few-shot row) | 2.4 |
 | AC14: `manual:` real GPU run on synthetic data | manual: needs the physical eGPU and the live model; not reproducible in CI | **5.1–5.4** |
 | AC15: `manual:` Joost's real run | manual: real data, Joost only | — (sign-off) |
+| FR input = only `Ongecategoriseerd` (NULL excluded) | `test_flow.py::test_null_category_not_grouped` | — |
+| Review file private (bank data) | `test_io.py::test_review_file_is_private` (mode 0600) | 4.2 |
 | Out-of-scope: network only to the local endpoint | `test_llm.py::test_ignores_proxy_env`, `::test_redirect_refused`, `test_io.py::test_non_loopback_endpoint_refused` | 4.3 |
 
 Mutation check done during the build: removing the proxy block, the IBAN scrub, or the per-process VRAM check each turns its test red.
@@ -53,10 +56,10 @@ Mutation check done during the build: removing the proxy block, the IBAN scrub, 
 
 | # | Test case | Input / action | Expected result | Priority |
 |---|---|---|---|---|
-| 2.1 | Bad zoekterm | the model proposes digits, a < 4-char term, or a term not in every group text | fallback to the lowercased naam when valid, else empty + `zoekterm ongeldig` | High |
+| 2.1 | Zoekterm (amended) | named group (≥ 4 chars), model proposes anything | zoekterm = full lowercased name; for a nameless or < 4-char-name group, the model term only if it's valid (≥ 4, no digits, in every text), else empty + `zoekterm ongeldig` | High |
 | 2.2 | Collision | the proposed term also matches transactions in another category | `botsing: N transacties in <cats>`; `Ongecategoriseerd` and NULL don't count | High |
 | 2.3 | Shadow | an existing active rule already matches the group | `al gedekt door regel '<term>'` (the first rule in Categorizer order) | Normal |
-| 2.4 | IBAN scrub | descriptions with IBANs: plain, lowercase, spaced (`nl00 rabo 0000 0000 02`) | no IBAN (in any of those forms) in any request body | High |
+| 2.4 | IBAN scrub | descriptions with IBANs: plain, lowercase, spaced, double-spaced, tab, NBSP, dashes, dots, glued `IBANNL…` | no IBAN in any request body (whitespace is collapsed before masking) | High |
 
 ### 3. GPU guard
 **Location:** `tools/ai_suggest/gpu.py`
@@ -96,8 +99,9 @@ AI_SUGGEST_API_KEY=<given> .venv/bin/python -m tools.ai_suggest --db <tmp>/data/
 | `sleutel` | naam `Test Streaming B.V.` | `test streaming b.v.` | `group_key` |
 | `sleutel` (nameless) | naam `""`, omschrijving `Iets Anders` | `iets anders` | `group_key` |
 | `type` | bedrag `-0.01` / `0` / `0.01` | uitgaven / uitgaven / inkomsten | `sign_type` (> 0) |
-| `zoekterm` | model `abonr.4163`, naam `Test Streaming B.V.` | `test streaming b.v.` | `choose_zoekterm` |
-| collision | term `test`, `Test Garage` in `Auto` | `botsing: 1 transacties in Auto` | `collision_flag` |
+| `zoekterm` | model `woning`, naam `Test Woonstichting` | `test woonstichting` | `choose_zoekterm` (name first) |
+| `zoekterm` | model `abonr.4163`, naam empty | `""` + `zoekterm ongeldig` | `choose_zoekterm` |
+| collision | group `Test Garage`, `Test Garage Onderdelen` in `Auto` | `botsing: 1 transacties in Auto` | `collision_flag` |
 
 ---
 

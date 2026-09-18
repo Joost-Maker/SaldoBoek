@@ -142,6 +142,32 @@ def test_out_via_symlink_to_db_refused(sdb, stub, host, tmp_path, capsys):
     assert sha256(sdb.path) == before
 
 
+def test_tmp_symlink_to_db_cannot_overwrite(sdb, stub, host, tmp_path, capsys):
+    # Code gate wijziging 3 (bughunt R2-1): een link op <out>.tmp mag de DB niet raken
+    from tools.ai_suggest.__main__ import main
+
+    sdb.add_tx("Test Bakker", "Brood", -4.5)
+    out = tmp_path / "review.csv"
+    trap = tmp_path / "review.csv.tmp"
+    trap.symlink_to(sdb.path)
+    before = sha256(sdb.path)
+    capsys.readouterr()
+    code = main(["--db", str(sdb.path), "--out", str(out), "--endpoint", stub.url,
+                 "--sysfs-root", str(host.sysfs), "--proc-root", str(host.proc)])
+    assert code == 0
+    assert sha256(sdb.path) == before
+    assert trap.is_symlink()
+    assert out.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_review_file_is_private(sdb, run):
+    import stat
+
+    sdb.add_tx("Test Bakker", "Brood", -4.5)
+    code, out, csv_path = run()
+    assert stat.S_IMODE(csv_path.stat().st_mode) == 0o600
+
+
 def test_out_must_be_csv(sdb, stub, host, tmp_path, capsys):
     from tools.ai_suggest.__main__ import main
 

@@ -142,6 +142,42 @@ def test_no_iban_in_requests(sdb, stub, run):
         assert "0000 0000 02" not in text
 
 
+def test_no_iban_in_requests_padded_and_glued(sdb, stub, run):
+    # Code gate wijziging 1: dubbele spaties, tab, NBSP, streepjes, punten en
+    # vastgeplakt 'IBANNL…', ook in een few-shot-voorbeeld
+    variants = [
+        "Overboeking NL00  ABNA  0000  0000  01 okt",
+        "Overboeking NL00\tRABO\t0000\t0000\t02",
+        "Overboeking NL00\u00a0INGB\u00a00000\u00a00000\u00a003",
+        "Overboeking NL00-KNAB-0000-0000-04",
+        "Overboeking NL00.ASNB.0000.0000.05",
+        "Overboeking IBANNL00TRIO0000000006 ref",
+    ]
+    for i, oms in enumerate(variants):
+        sdb.add_tx(f"Test Partij {chr(65 + i)}", oms, -1.0 - i)
+    sdb.add_tx("Test Voorbeeld", "Pin NL00  BUNQ  0000  0000  07", -3.0, categorie="Boodschappen")
+    run()
+    assert stub.requests
+    compact_iban = re.compile(r"[A-Z]{2}\d{2}[A-Z]{4}\d{10}", re.IGNORECASE)
+    for req in stub.requests:
+        text = str(req["body"])
+        squeezed = re.sub(r"[\s.\-]|\\t|\\xa0", "", text)
+        assert not compact_iban.search(squeezed), text
+        for fake in ("0000000001", "0000000002", "0000000003", "0000000004",
+                     "0000000005", "0000000006", "0000000007"):
+            assert fake not in squeezed
+
+
+def test_null_category_not_grouped(sdb, stub, run):
+    # Code gate wijziging 2: alleen 'Ongecategoriseerd' is invoer, NULL niet
+    sdb.add_tx("Test Zonder Categorie", "iets", -1.0, categorie=None)
+    code, out, csv_path = run()
+    assert code == 0
+    _, rows = read_review(csv_path)
+    assert rows == []
+    assert len(stub.requests) == 0
+
+
 def test_stdout_has_no_descriptions(sdb, stub, run):
     # FR: geen transactie-inhoud op stdout; naamloze groep toont '(geen naam)' (N13)
     sdb.add_tx("Test Streaming B.V.", "Geheime omschrijving een", -9.99)

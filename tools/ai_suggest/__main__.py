@@ -16,7 +16,6 @@ from datetime import datetime
 from tools.ai_common.grouping import (
     UNCATEGORIZED,
     group_key,
-    is_uncategorized,
     rule_text,
     sign_type,
 )
@@ -56,7 +55,9 @@ def display_name(naam):
 def build_groups(transactions):
     groups = {}
     for tx in transactions:
-        if not is_uncategorized(tx.categorie):
+        # Brief: alleen 'Ongecategoriseerd'. NULL telt hier niet mee (0003 zoekt
+        # groepen op dezelfde manier terug, via UNCATEGORIZED uit ai_common)
+        if tx.categorie != UNCATEGORIZED:
             continue
         key = (group_key(tx.naam, tx.omschrijving), sign_type(tx.bedrag))
         g = groups.setdefault(

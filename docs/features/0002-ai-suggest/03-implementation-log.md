@@ -24,6 +24,7 @@ Smoke check (no DB, no model): `check_endpoint` accepts `127.0.0.1`/`localhost`/
 | 1 | Per-process VRAM check beyond the brief's card check | Added (spec Decision 1, gate-approved) | Card check only, which passes on this machine even with Qwen off the eGPU | One function in `gpu.py` |
 | 2 | Spill < 90 % | Warning in the progress output and the summary | Abort | One branch |
 | 3 | `--gebruiker` with an id that doesn't exist | Exit via `SystemExit` with a message (code 1) | Silently choosing another user | CLI only |
+| 8 | Review CSV file mode | 0600 (from mkstemp), because it holds bank data | 0644 like normal files | `os.chmod` one line |
 | 4 | Group display name when `naam` is empty | `(geen naam)` on stdout; the CSV `naam` column stays empty, and `sleutel` holds the description key | Printing the key (it would leak the description to stdout) | Display only |
 | 5 | Sample descriptions sent to the model | Up to 3 distinct, scrubbed and truncated to 120 characters | Full text | Constants in `prompt.py` |
 | 7 | Test file layout: the spec named `test_cli.py`/`test_readonly.py`/`test_review.py`/`test_prompt.py`; those cases live in `tests/ai_suggest/test_io.py` | One I/O-boundaries file | Four small files | Moving tests is free; the protocol's coverage table names the real files |
@@ -46,3 +47,4 @@ None.
 | phase 4, mutation check | remove the proxy block / IBAN scrub / per-process VRAM check, one at a time | each makes its guarding test fail; restored and green again (53 passed) |
 | fix round 1 (E2) | `.venv/bin/python -m pytest -q` | green (56 passed) |
 | fix round 1b (PO amendment) | `.venv/bin/python -m pytest -q` | green (60 passed) |
+| code gate fix round | `.venv/bin/python -m pytest -q` | green (64 passed); new tests fail on the old code (mutation check) |
