@@ -81,3 +81,19 @@ All 8 zoektermen are the full counterparty names (PO amendment works end to end)
 Mutation check: with the round-3 `prompt.py`, the 5 new cases fail; with the fix, all 23 scrub tests pass. Known and privacy-safe (N7): a candidate can swallow up to 30 following characters (`Huur op 18-09-2026 … NL00 …` → `Huur [IBAN]`).
 
 Test command after round 3b: `.venv/bin/python -m pytest -q` → green (87 passed).
+
+## Round 4: PO amendment 2, IBAN masking removed (interactive, 2026-09-18)
+
+Code gate review 4 (on R6) was **stopped by Joost** before it produced a verdict. He then withdrew the IBAN requirement (see `00-brief.md`, PO amendment 2).
+
+| Change | Files | Tests |
+|---|---|---|
+| Removed `IBAN_RE`, `IBAN_MIN_DIGITS`, `_iban_spans`, `_mask_ibans`; `scrub()` → `clean()` (collapse whitespace, cap at 1000 chars); the prompt carries up to 3 full sample lines `datum · bedrag · omschrijving` per group | `tools/ai_suggest/prompt.py`, `tools/ai_suggest/__main__.py` | removed `tests/ai_suggest/test_prompt_scrub.py` and `test_flow.py::test_no_iban_in_requests*`; added `test_flow.py::test_full_description_reaches_prompt` |
+
+Check: `jan-claudian.service` has no verbose/log flags, and the journal holds 0 lines with prompt content after today's runs, so nothing on disk to redact.
+
+Real GPU run on the final code (synthetic DB, service started for the run and stopped after): 10.6 GiB resident on the RX 9060 XT, mean 1.8 s/call, 8/8 groups, exit 0, no flags.
+
+**Closure mode:** per Joost ("Licht: tests + jouw OK"), no further code gate. Final approval is Joost's word in chat (interactive mode). R1–R4 were approved by the code gate; R5/R6 are moot, since the code they concerned was removed.
+
+Test command after round 4: `.venv/bin/python -m pytest -q` → green (63 passed).

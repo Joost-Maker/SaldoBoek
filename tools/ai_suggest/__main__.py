@@ -69,6 +69,7 @@ def build_groups(transactions):
                 "aantal": 0,
                 "totaal": 0.0,
                 "samples": [],
+                "lines": [],
                 "texts": [],
             },
         )
@@ -78,6 +79,9 @@ def build_groups(transactions):
         oms = (tx.omschrijving or "").strip()
         if oms and oms not in g["samples"] and len(g["samples"]) < prompt.MAX_SAMPLES:
             g["samples"].append(oms)
+            g["lines"].append(
+                f"{tx.datum} · {review.dutch_number(tx.bedrag or 0.0, 2)} · {oms}"
+            )
     ordered = sorted(groups.values(), key=lambda g: (-g["aantal"], g["sleutel"], g["type"]))
     for i, g in enumerate(ordered, start=1):
         g["groep"] = i

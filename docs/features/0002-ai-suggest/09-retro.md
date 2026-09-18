@@ -28,3 +28,12 @@
 - **Real-hardware probing before the spec** (one synthetic call) exposed the wrong VRAM premise (Jan desktop holding 9 GiB) and the `zekerheid: 95` output. The per-process GPU guard came straight out of it.
 - **Fresh-context gates kept catching real things:** proxy env leakage (spec gate), `--out` overwriting the DB (hunt), the `<out>.tmp` link, IBAN variants, and the over-masking regression (code gate).
 - **Mutation checks** (temporarily breaking a guard and confirming its test goes red) gave confidence that the safety tests actually test something.
+
+## Addendum after closing (2026-09-18)
+
+**The biggest cost of this run was a requirement the PO never asked for.** "No IBANs in the prompt" was added during refinement (by Claude, as dev-po) as defence-in-depth for a model that runs on 127.0.0.1 and logs nothing. It then cost three code-gate rounds (R1 leak → R5 over-masking → R6 leak through the fix) and a park, before Joost asked "waarom al deze moeite" and withdrew it. The fix-quality retro items above stand, but the root cause sits earlier:
+
+| # | File (in Joost-Maker/Agents) | Change | Why |
+|---|---|---|---|
+| 6 | `skills/dev-po/SKILL.md` (Refine) | "Every security/privacy requirement in a brief must name the threat it blocks, and the PO must confirm it. If the data never leaves the machine, in-process redaction needs an explicit reason." | Stops refinement from inventing costly, low-value constraints |
+| 7 | `skills/dev-go/references/pipeline.md` (Phase 6) | "If fixing one requirement fails twice, ask whether the requirement is worth its cost (interactive: ask the PO; night: park with that question) before a third attempt." | A requirement that keeps breaking is a signal about the requirement, not only the code |

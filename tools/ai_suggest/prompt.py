@@ -1,56 +1,10 @@
-"""Prompts voor het lokale model. Er gaan nooit IBAN's naar het model."""
-
-import re
+"""Prompts voor het lokale model (volledige transacties, alleen lokaal)."""
 
 from tools.ai_common.grouping import group_key, is_uncategorized, sign_type
 
 MAX_FEWSHOT = 15
 MAX_SAMPLES = 3
-MAX_TEXT = 120
-
-# IBAN in elke vorm die na het samenvouwen van witruimte overblijft: 2 letters,
-# 2 cijfers, dan 11-30 alfanumeriek, met hooguit één spatie/punt/streepje ertussen.
-# Grenzen aan beide kanten (anders wordt gewone tekst als 'Factuur 2026-00123 …'
-# gemaskeerd), met één uitzondering vooraan: direct na 'IBAN' (vastgeplakt 'IBANNL00…').
-IBAN_RE = re.compile(
-    r"(?:(?<=IBAN)|(?<![A-Z0-9]))[A-Z]{2}[ .\-]?\d{2}(?:[ .\-]?[A-Z0-9]){11,30}(?![A-Z0-9])",
-    re.IGNORECASE,
-)
-# Een echte IBAN heeft ≥ 10 cijfers (NL: 2 controle + 10 rekening; andere landen meer).
-# Kandidaten met minder cijfers zijn gewone tekst, bv. 'AH to go 1418 Amsterdam'.
-IBAN_MIN_DIGITS = 10
-
-
-def _iban_spans(text):
-    """Alle IBAN-stukken, elke startpositie apart beoordeeld en daarna samengevoegd.
-
-    Met re.sub zou een afgekeurde kandidaat die vroeger begint (bv. 'AH 12 …')
-    over de start van een echte IBAN heen lopen, waardoor die IBAN nooit getest
-    wordt en heel of half in de prompt belandt.
-    """
-    spans = []
-    for start in range(len(text)):
-        match = IBAN_RE.match(text, start)
-        if match and sum(ch.isdigit() for ch in match.group(0)) >= IBAN_MIN_DIGITS:
-            spans.append((match.start(), match.end()))
-    merged = []
-    for start, end in spans:  # al gesorteerd op start
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-    return merged
-
-
-def _mask_ibans(text):
-    parts = []
-    last = 0
-    for start, end in _iban_spans(text):
-        parts.append(text[last:start])
-        parts.append("[IBAN]")
-        last = end
-    parts.append(text[last:])
-    return "".join(parts)
+MAX_TEXT = 1000
 
 SYSTEM_PROMPT = (
     "Je categoriseert Nederlandse banktransacties voor een huishoudboekje.\n"
@@ -63,14 +17,13 @@ SYSTEM_PROMPT = (
 )
 
 
-def scrub(text):
-    """Vervang IBAN's door [IBAN] en kort lange teksten in.
+def clean(text):
+    """Witruimte samenvouwen en extreem lange teksten inkorten.
 
-    Eerst witruimte (tabs, dubbele spaties, NBSP) samenvouwen, dan maskeren:
-    andersom zou een IBAN met rare witruimte het patroon ontlopen.
+    Geen maskering: het model draait lokaal (alleen 127.0.0.1) en logt geen
+    prompts, dus het krijgt de volledige transactie (PO-besluit 2026-09-18).
     """
     text = " ".join(str(text or "").split())
-    text = _mask_ibans(text)
     if len(text) > MAX_TEXT:
         text = text[: MAX_TEXT - 1] + "…"
     return text
@@ -92,8 +45,8 @@ def fewshot_examples(transactions):
         seen.add(key)
         examples.append(
             {
-                "naam": scrub(tx.naam) or "(geen naam)",
-                "omschrijving": scrub(tx.omschrijving),
+                "naam": clean(tx.naam) or "(geen naam)",
+                "omschrijving": clean(tx.omschrijving),
                 "type": sign_type(tx.bedrag),
                 "categorie": tx.categorie,
             }
@@ -112,12 +65,12 @@ def build_messages(group, allowed, examples):
         ]
         system += "\n\nZo heeft de gebruiker eerder gecategoriseerd:\n" + "\n".join(lines)
 
-    samples = "\n".join(f"- {scrub(s)}" for s in group["samples"]) or "- (geen)"
+    samples = "\n".join(f"- {clean(line)}" for line in group["lines"]) or "- (geen)"
     user = (
-        f"Tegenpartij: {scrub(group['naam']) or '(geen naam)'}\n"
+        f"Tegenpartij: {clean(group['naam']) or '(geen naam)'}\n"
         f"Type: {group['type']}\n"
         f"Aantal transacties: {group['aantal']}\n"
-        f"Voorbeeldomschrijvingen:\n{samples}\n"
+        f"Voorbeeldtransacties (datum · bedrag · omschrijving):\n{samples}\n"
         f"Toegestane categorieën: {', '.join(allowed)}"
     )
     return [
