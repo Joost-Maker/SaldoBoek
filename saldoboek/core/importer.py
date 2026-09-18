@@ -4,6 +4,7 @@ import os
 import pandas as pd
 
 from ..config.bank_parsers import BANK_PARSERS
+from .parsers.knab_parser import KnabParser, is_knab_file
 from .parsers.rabo_parser import RaboParser
 from .parsers.sns_parser import SNSParser
 
@@ -19,6 +20,7 @@ class TransactionImporter:
         # Initialiseer parsers
         self.sns_parser = SNSParser()
         self.rabo_parser = RaboParser()
+        self.knab_parser = KnabParser()
 
     def detect_bank_and_parse(self, filepath, account_type=None):
         """Detecteer bank type en parse het bestand.
@@ -33,6 +35,11 @@ class TransactionImporter:
             return self.sns_parser.parse_csv(filepath, account_type)
         elif "RABO" in filename or "RABOBANK" in filename:
             return self.rabo_parser.parse_csv(filepath, account_type)
+        elif "KNAB" in filename:
+            return self.knab_parser.parse_csv(filepath, account_type)
+        elif is_knab_file(filepath):
+            # Knab-export onder een andere naam: herken aan de header
+            return self.knab_parser.parse_csv(filepath, account_type)
         else:
             # Fallback naar oude methode
             for bank_code, parser_method in BANK_PARSERS.items():

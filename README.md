@@ -188,6 +188,7 @@ Je database blijft behouden bij updates - SaldoBoek voert automatisch migraties 
 
 - **SNS Bank** - Transactiehistorie CSV
 - **Rabobank** - Transactiehistorie CSV
+- **Knab** - Transactieoverzicht CSV
 
 (Hulp bij het toevoegen van andere banken is welkom!)
 
