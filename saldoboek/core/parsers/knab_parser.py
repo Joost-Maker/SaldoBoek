@@ -12,6 +12,20 @@ KNAB_SIGN = {
     "Bijschrijvingen": 1,
 }
 
+# Kolommen die de parser gebruikt: ontbreekt er één, dan weigeren we het bestand
+# (anders wordt bijv. het rekeningnummer stilletjes leeg)
+KNAB_REQUIRED_COLUMNS = (
+    "Rekeningnummer",
+    "Transactiedatum",
+    "Valutacode",
+    "CreditDebet",
+    "Bedrag",
+    "Tegenrekeningnummer",
+    "Tegenrekeninghouder",
+    "Omschrijving",
+    "Boekdatum",
+)
+
 KNAB_ENCODINGS = ("utf-8-sig", "cp1252")
 KNAB_DATE_FORMAT = "%d-%m-%Y"
 DETECT_MAX_ROWS = 20
@@ -107,6 +121,12 @@ class KnabParser:
         columns = [header[i] for i in keep]
         width = len(header)
 
+        ontbrekend = [c for c in KNAB_REQUIRED_COLUMNS if c not in columns]
+        if ontbrekend:
+            raise ValueError(
+                f"Knab-header in {filepath} mist kolom(men): {', '.join(ontbrekend)}"
+            )
+
         records = []
         for line_no, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
             if not any(cell.strip() for cell in row):
@@ -176,6 +196,11 @@ class KnabParser:
 
         datum_tekst = text("Transactiedatum")
         datum_tekst = datum_tekst.where(datum_tekst != "", text("Boekdatum"))
+        zonder_datum = int((datum_tekst == "").sum())
+        if zonder_datum:
+            raise ValueError(
+                f"{zonder_datum} rij(en) zonder Transactiedatum en Boekdatum in {filepath}"
+            )
         try:
             datum = pd.to_datetime(datum_tekst, format=KNAB_DATE_FORMAT, errors="raise")
         except (ValueError, TypeError) as e:

@@ -131,3 +131,32 @@ def test_is_knab_file(knab_csv, tmp_path):
     other.write_text('"Datum";"Bedrag";\r\n"01-01-2026";"1,0";\r\n', encoding="utf-8")
     assert not is_knab_file(other)
     assert not is_knab_file(tmp_path / "bestaat-niet.csv")
+
+
+# Regressietests fixronde 1 (05-bughunt-report.md)
+
+
+def test_quoted_preamble_does_not_corrupt_header(knab_csv):
+    # BUG-1: een preamble die met een losse '"' begint smelt samen met de header;
+    # dan ontbreekt 'Rekeningnummer' en moet het bestand geweigerd worden
+    path = knab_csv([knab_row()], preamble='"Export van Knab')
+    with pytest.raises(ValueError, match="Rekeningnummer"):
+        parse(path)
+
+
+def test_missing_required_column_raises(tmp_path):
+    # E-3 (header): hernoemde kolom mag niet stil leeg worden
+    from .conftest import KNAB_HEADER, render_knab
+
+    header = ["IBAN" if c == "Rekeningnummer" else c for c in KNAB_HEADER]
+    path = tmp_path / "Knab hernoemd.csv"
+    path.write_text(render_knab([knab_row()], header=header), encoding="utf-8")
+    with pytest.raises(ValueError, match="Rekeningnummer"):
+        parse(path)
+
+
+def test_row_without_any_date_raises(knab_csv):
+    # E-2: lege Transactiedatum én Boekdatum -> fout, geen NaT
+    path = knab_csv([knab_row(), knab_row(datum="", boekdatum="")])
+    with pytest.raises(ValueError, match="zonder Transactiedatum"):
+        parse(path)

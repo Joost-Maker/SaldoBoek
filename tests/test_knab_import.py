@@ -109,3 +109,27 @@ def test_import_twice_is_idempotent(importer, knab_csv):
         "SELECT bedrag FROM transacties ORDER BY datum", fetch=True
     )
     assert [b for (b,) in bedragen] == [-12.95, 1234.56, -6.5]
+
+
+def test_import_row_without_date_skips_file_and_continues(importer, knab_csv):
+    # E-2: bestand met datumloze rij wordt overgeslagen, volgende bestand gaat door
+    bad = knab_csv(
+        [knab_row(), knab_row(datum="", boekdatum=""), knab_row(bedrag="3")],
+        filename="Knab slecht.csv",
+    )
+    good = knab_csv([knab_row(bedrag="7,25")], filename="Knab goed.csv")
+    total, _ = importer.import_transactions_with_categorization(
+        [str(bad), str(good)], 1, "betaalrekening"
+    )
+    assert total == 1
+    assert importer.db.execute("SELECT bedrag FROM transacties", fetch=True) == [(-7.25,)]
+
+
+def test_import_quoted_preamble_stores_nothing(importer, knab_csv):
+    # BUG-1: geen import met lege rekening
+    path = knab_csv([knab_row()], preamble='"Export van Knab')
+    total, _ = importer.import_transactions_with_categorization(
+        [str(path)], 1, "betaalrekening"
+    )
+    assert total == 0
+    assert count_transactions(importer) == 0
