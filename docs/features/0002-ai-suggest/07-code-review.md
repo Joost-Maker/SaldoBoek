@@ -92,4 +92,51 @@ Review 1 outcome: changes requested (R1 to R4). See the re-review below.
 - **N6 (note):** in `review.py:36-47`, if `os.fdopen` itself raised, the raw fd would leak. That's negligible for a one-shot CLI and not a finding. The Decisions table lists row 8 between rows 3 and 4 (cosmetic, like N1).
 - Notes N3 to N5 from review 1 stay open for the sign-off and the 0003 brief. N3 (an unwritable `--out` directory is only discovered at the end) is still true: `mkstemp` now raises at write time, after all the model calls.
 
+Review 2 outcome: changes requested (R5). See re-review 3 below.
+
+## Re-review 3 (after interactive round 3)
+
+**Diff:** `git diff dev...HEAD` (through `2565bde`, 30 files, +3044). Since review 2, the only code change is `a2503dc`: `tools/ai_suggest/prompt.py` (+20/-5) and the new `tests/ai_suggest/test_prompt_scrub.py`. The rest of that commit and `2565bde` are docs. `saldoboek/` is still untouched, and every commit subject references `0002-ai-suggest`. The PO's interactive continuation (`06-fixes.md` round 3) replaces the cap. The `PARKED` status in `08-signoff.md` and the ledger is not held against the code. **Date:** 2026-09-18.
+
+**Honesty spot-check:** `.venv/bin/python -m pytest -q` → **82 passed** (24.9 s). This matches `06-fixes.md` round 3 (64 + 10 + 8 new parametrised scrub cases). Every probe below used synthetic strings only: no DB, no endpoint, no source changes. The probe scripts are in the session scratchpad, not the repo.
+
+### R5 (over-masking): resolved for the cases it named
+
+- `prompt.py:15-18` restores boundaries on both sides, with the `(?<=IBAN)` exception for the glued form. That's the pattern review 2 proposed. `_mask_iban` (`prompt.py:24-28`) masks a candidate only if it has ≥ 10 digits.
+- `test_prompt_scrub.py` checks 10 IBAN forms positively and 8 ordinary descriptions for exact equality (`06-fixes.md` and the log say "9" and "7/9"; the list has 8, which is cosmetic). All four R5 strings are intact again. The negative side means masking everything can no longer pass the IBAN tests.
+- **The ≥ 10-digit rule on its own is sound.** Every real IBAN has at least 10 digits: NL has 12 (2 check + 10 account), NO, the shortest, has 13, BE 14, and DE, GB and FR more. When an IBAN is the leftmost candidate, the greedy match always contains the whole IBAN, because its own end is a valid boundary. So the threshold can't reject an IBAN that starts its own match. I confirmed compact and spaced NO, BE, GB and DE IBANs are masked.
+- **Ordinary Dutch bank text mostly stays intact.** The 8 test strings stay intact, and so do the formats I tried in addition: `BEA NR:… 18.09.26/12.34 AH TO GO 1418 AMSTERDAM,PAS 123`, `Pasvolgnr: 012 18-09-2026 12:34 Transactie: … Term: …`, `CCV*Test Bakkerij 18-09-2026 12:34 PAS 012`, `Apple Pay AH 1234 Amsterdam NLD`, `Termijn 3 van 12 in 2026 zorgverzekering`, and `/TRTP/…/IBAN/<iban>/BIC/…/NAME/…`, where only the IBAN is masked. The remaining over-masking is listed as N7 below.
+
+### New finding
+
+- **R6 (required): a spaced, dashed or dotted IBAN can reach the prompt whole or in part. This breaks the brief FR "No IBANs in the prompt" (`00-brief.md:37`).** The cause is how the pattern and the substitution interact, not the threshold on its own. `IBAN_RE` allows a separator before each of up to 30 characters, so a candidate can **start at an earlier 2-letter word followed by 2 digits** (`AH 12`, `NS 20`, `nr 12`, `op 18`) and run across the following words into the IBAN. There it backtracks to a separator *inside* the IBAN. `re.sub` then continues after that match, so the IBAN's own start (`NL00`) is used up and never checked again. What happens next depends on the digit count of that early candidate:
+  - **Below 10 digits, `_mask_iban` rejects it and the whole IBAN leaks** (round 3 made this worse):
+    - `Retour AH 12 boodschappen teruggestort NL00 ABNA 0000 0000 01` → unchanged
+    - `NS 20 euro retour graag naar NL00 INGB 0000 0000 01` → unchanged
+    - `nr 12 van Test Energie via NL00-ABNA-0000-0000-01` → unchanged
+  - **10 digits or more, it's masked, but the account digits after the cut leak.** This part was already present in the pattern review 2 proposed, so the gate shares responsibility for it:
+    - `Huur op 18-09-2026 overgemaakt naar NL00 ABNA 0000 0000 01` → `Huur [IBAN] 0000 0000 01`
+
+  User-typed transfer descriptions with a spaced IBAN ("terugbetalen naar NL.. …") are exactly where spaced forms occur, and a short word followed by a number just before them is ordinary Dutch. This is the same category of break as review 1's R1. Compact IBANs aren't affected, because a match can't end inside them.
+
+  **Change:** check every candidate start on its own, so that one candidate can never hide another. Then mask the **union** of the accepted spans. Example: for each position `i`, `m = IBAN_RE.match(text, i)`; if it has ≥ `IBAN_MIN_DIGITS` digits, record `(m.start(), m.end())`; merge overlapping spans and replace each merged span with `[IBAN]`. The lookbehinds still see the text before `i`. I tested that sketch with the current `IBAN_RE` unchanged:
+  - all 18 existing scrub cases pass;
+  - all five strings above, plus `AB 12 Test Energie Amsterdam NL00 ABNA 0000 0000 01`, `nr 12 3456 NL00 ABNA 0000 0000 01` and `nr 12 345678 9012 NL00 ABNA 0000 0000 01`, come out with no IBAN digits left.
+
+  Any equivalent fix is fine; a pattern tweak alone isn't enough. For example, a variant I tried with 4-character groups still lost `NL00` to a preceding candidate when the word lengths happened to line up. Add these leak strings to `test_prompt_scrub.py::IBANS`. The existing assertion (`"0000"` not among the output digits) already catches both the whole leak and the partial one. Update the `06-fixes.md` row and protocol row 2.4.
+
+### Notes (no change required)
+
+- **N7, remaining over-masking.** It's privacy-safe, so it's fine to fold into the R6 change but not required. A candidate takes up to 30 characters, **including the words that follow**:
+  - Words after a real IBAN are lost: `Overboeking NL00ABNA0000000001 Test Energie huur` → `Overboeking [IBAN]`, and `… IBAN: <iban> BIC: ABNANL2A …` → `[IBAN]: ABNANL2A`.
+  - A 2-letter word before a long number takes the number and the words after it:
+    - `Tikkie ID 000012345678 Test Pizza avond` → `Tikkie [IBAN]`
+    - `Betaald op 18-09-2026 om 12.34 uur` → `Betaald [IBAN]`
+    - `Fact nr 2026001234 dd 18-09-2026` → `Fact [IBAN]`
+  - A SEPA creditor ID (`NL00ZZZ…`) is masked too.
+
+  Punctuation (`,` `:` `/`) stops the greed, and the structured ING/ABN/Tikkie exports use it, so the practical loss is usually a label. Still, the positive tests only check that `[IBAN]` appears. Asserting the surrounding text as well (e.g. `scrub("Overboeking NL00ABNA0000000001 okt") == "Overboeking [IBAN] okt"`) would pin this down if it's ever tightened. One design I tried keeps every string in this note intact and closes all the R6 leaks: a compact pass with no separators, then a separated pass where each chunk after the bank code must contain a digit. It still needs the union step from R6 to be safe, so the union step is the required part.
+- **N8:** the round-3 docs are otherwise accurate. The `06-fixes.md` round-3 row and protocol 2.4 match the code, the log's test-run table has the round-3 line, and the AC14 re-run on `2565bde`'s code is recorded (10.6 GiB resident, no spill, 0600 CSV). R6 only affects the text inside prompts, so it doesn't change the AC14 result, and after the R6 fix only the masking of spaced IBANs differs from the code AC14 ran. A new GPU run isn't needed for R6.
+- **Rest of the diff:** unchanged since review 2 (`git diff 91d7a71..HEAD` touches no other code). The hard-lines table from review 1, R1 to R4 as resolved in review 2, and the AC→test table all still hold. AC13 now also maps to `test_prompt_scrub.py`. Notes N1 and N3 to N6 stay open for the sign-off and the 0003 brief.
+
 Verdict: changes requested
