@@ -111,3 +111,43 @@ def test_fewshot_limit_and_order(sdb):
     assert examples[0]["naam"] == "Test Winkel 19"
     assert len({e["naam"] for e in examples}) == 15
     assert all(e["categorie"] != "Ongecategoriseerd" for e in examples)
+
+
+# --- regressie bughunt E2: --out mag de database nooit overschrijven ---
+
+def test_out_equal_to_db_refused(sdb, stub, host, capsys):
+    from tools.ai_suggest.__main__ import main
+
+    sdb.add_tx("Test Bakker", "Brood", -4.5)
+    before = sha256(sdb.path)
+    capsys.readouterr()
+    code = main(["--db", str(sdb.path), "--out", str(sdb.path), "--endpoint", stub.url,
+                 "--sysfs-root", str(host.sysfs), "--proc-root", str(host.proc)])
+    assert code == 1
+    assert "--out mag niet de database zijn" in capsys.readouterr().out
+    assert sha256(sdb.path) == before
+    assert len(stub.requests) == 0
+
+
+def test_out_via_symlink_to_db_refused(sdb, stub, host, tmp_path, capsys):
+    from tools.ai_suggest.__main__ import main
+
+    link = tmp_path / "review.csv"
+    link.symlink_to(sdb.path)
+    before = sha256(sdb.path)
+    capsys.readouterr()
+    code = main(["--db", str(sdb.path), "--out", str(link), "--endpoint", stub.url,
+                 "--sysfs-root", str(host.sysfs), "--proc-root", str(host.proc)])
+    assert code == 1
+    assert sha256(sdb.path) == before
+
+
+def test_out_must_be_csv(sdb, stub, host, tmp_path, capsys):
+    from tools.ai_suggest.__main__ import main
+
+    capsys.readouterr()
+    code = main(["--db", str(sdb.path), "--out", str(tmp_path / "andere.db"), "--endpoint", stub.url,
+                 "--sysfs-root", str(host.sysfs), "--proc-root", str(host.proc)])
+    assert code == 1
+    assert "--out moet een .csv-bestand zijn" in capsys.readouterr().out
+    assert len(stub.requests) == 0

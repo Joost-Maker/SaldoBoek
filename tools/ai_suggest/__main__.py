@@ -101,6 +101,16 @@ def review_row(g, categorie="", zoekterm="", zekerheid=None, flags=()):
     }
 
 
+def check_output(out, db_path):
+    """Het reviewbestand mag nooit de database (of een ander niet-CSV-bestand) raken."""
+    out_path = os.path.realpath(out)
+    if out_path == os.path.realpath(db_path):
+        return "--out mag niet de database zijn"
+    if not out_path.lower().endswith(".csv"):
+        return "--out moet een .csv-bestand zijn"
+    return None
+
+
 def resolve_user(db, requested):
     users = db.users()
     if requested is not None:
@@ -126,6 +136,12 @@ def main(argv=None):
     api_key = os.environ.get(args.api_key_env)
     if not api_key:
         print(f"Let op: {args.api_key_env} is niet gezet — aanroep zonder API-sleutel.")
+
+    if args.out:
+        problem = check_output(args.out, args.db)
+        if problem:
+            print(problem)
+            return 1
 
     try:
         egpu = gpu.require_egpu(args.sysfs_root)
