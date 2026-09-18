@@ -26,6 +26,7 @@ Smoke check (no DB, no model): `check_endpoint` accepts `127.0.0.1`/`localhost`/
 | 3 | `--gebruiker` with an id that doesn't exist | Exit via `SystemExit` with a message (code 1) | Silently choosing another user | CLI only |
 | 4 | Group display name when `naam` is empty | `(geen naam)` on stdout; the CSV `naam` column stays empty, and `sleutel` holds the description key | Printing the key (it would leak the description to stdout) | Display only |
 | 5 | Sample descriptions sent to the model | Up to 3 distinct, scrubbed and truncated to 120 characters | Full text | Constants in `prompt.py` |
+| 7 | Test file layout: the spec named `test_cli.py`/`test_readonly.py`/`test_review.py`/`test_prompt.py`; those cases live in `tests/ai_suggest/test_io.py` | One I/O-boundaries file | Four small files | Moving tests is free; the protocol's coverage table names the real files |
 | 6 | Groups in a partial file after an abort | Every group attempted so far, including the failed ones (flagged `model-fout`) | Only successful groups | `__main__.py` loop |
 
 ## Deviations from the spec
@@ -37,3 +38,5 @@ None.
 | When | Command | Result |
 |---|---|---|
 | baseline (phase 0, `dev`) | `.venv/bin/python -m pytest -q` | green (1 passed) |
+| phase 4, new suite | `.venv/bin/python -m pytest -q` | green (53 passed), first run |
+| phase 4, mutation check | remove the proxy block / IBAN scrub / per-process VRAM check, one at a time | each makes its guarding test fail; restored and green again (53 passed) |
