@@ -111,7 +111,11 @@ class KnabParser:
         for line_no, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
             if not any(cell.strip() for cell in row):
                 continue
-            extra = row[width:]
+            # Buiten de benoemde kolommen mag niets gevuld zijn: ook niet in
+            # de naamloze kolom die de afsluitende ';' van de header oplevert
+            extra = row[width:] + [
+                cell for i, cell in enumerate(row[:width]) if i not in keep
+            ]
             if any(cell.strip() for cell in extra):
                 raise ValueError(
                     f"Rij {line_no} in {filepath} heeft meer gevulde velden dan de header"

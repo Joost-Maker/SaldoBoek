@@ -28,6 +28,10 @@ Sanity check on a synthetic `export.csv` (BOM, CRLF, quoted, trailing `;`, a tho
 | 3 | Header detection placement | `elif is_knab_file(...)` directly after the `KNAB` branch, which behaves the same as "inside `else`, before the legacy loop" in the spec | Nesting inside `else` | Same control flow; purely structural |
 | 4 | Unreadable amount or date | `ValueError` naming the value | Dropping the row (Rabo does `dropna`) | Local to the parser; the gate accepted this as stricter than the brief |
 
+## Caught by phase 4 tests
+
+- `test_extra_filled_cell_raises` went red against the build. A filled cell in the **unnamed 16th column** (the one the header's trailing `;` creates) was silently dropped, because the extra-cell check only looked past the header width. Fixed in `_read_knab_table`: cells in any dropped (empty-named) column now count as extra and raise. This is a real code bug, not a test bug.
+
 ## Deviations from the spec
 
 None. Decision 3 is a structural equivalent of the spec's wording, not a behavioural change.
@@ -38,3 +42,5 @@ None. Decision 3 is a structural equivalent of the spec's wording, not a behavio
 |---|---|---|
 | baseline (phase 0) | `.venv/bin/python -m pytest -q` | green (1 passed) |
 | after build | `.venv/bin/python -m pytest -q` | green (1 passed in 0.21s) |
+| phase 4, new tests (1st run) | `.venv/bin/python -m pytest -q` | red: 1 failed, 20 passed (the bug above) |
+| phase 4, after fix | `.venv/bin/python -m pytest -q` | green (21 passed) |
