@@ -97,3 +97,13 @@ All tests use a **synthetic** SaldoBoek database built with `DatabaseManager(db_
 - `llama-server` supports `response_format: {type: "json_schema", json_schema: {schema: …}}` → a GBNF grammar, so an enum on `categorie` really constrains the output.
 - A self-reported `zekerheid` is a hint, not a calibrated probability. It's shown to Joost, not used for gating.
 - Keep the LLM client behind a small interface (`suggest(prompt, schema) -> dict`), so the tests inject the stub endpoint URL and nothing else changes.
+
+---
+
+## PO amendment — zoekterm = full counterparty name (Joost, 2026-09-18, during fix round 1)
+
+The real GPU run (AC14) showed the model proposing generic zoektermen (`woning`, `salaris`, `de hoek`). As permanent rules those would over-match future transactions. Decision: **when the group has a counterparty name, the zoekterm is always that full name** (lowercased, stripped). The model only picks the category.
+
+- Replaces the zoekterm FR: if `naam` is non-empty and ≥ 4 characters, zoekterm = lowercased stripped `naam` (digits allowed here, because Knab writes the same name every time). Otherwise (empty or too-short `naam`), the model's zoekterm is used, with the original validation (≥ 4, no digits, substring of every group text); if it fails, it's empty and flagged `zoekterm ongeldig`.
+- AC4 becomes: given naam `Test Woonstichting` and a model zoekterm `woning`, the zoekterm is `test woonstichting`. Given an **empty** naam and a model zoekterm `abonr.4163`, the zoekterm is empty and flagged `zoekterm ongeldig`. Given an empty naam and a valid model zoekterm `maandhuur` (in every text), the zoekterm is `maandhuur`.
+- AC6 becomes: given an uncategorised group `Test Garage` while `Test Garage Onderdelen` is already `Auto`, and the model proposes `Boodschappen`, the row is flagged `botsing: 1 transacties in Auto` (the name-derived zoekterm `test garage` also matches the other one).

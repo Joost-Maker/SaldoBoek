@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-18
 **Brief:** 00-brief.md (snapshot of `DEV/SaldoBoek AI suggest - GPU category and rule proposals.md`)
-**Revision:** 2
+**Revision:** 3
 
 ---
 
@@ -30,7 +30,7 @@ One real call against `Qwen3-14B-Q4_K_M` on :6767 with a `json_schema` `response
 - `tools/ai_suggest/__init__.py`
 - `tools/ai_suggest/__main__.py`: argparse CLI (the brief's flags, plus hidden `--proc-root` for tests), orchestration and exit codes.
 - `tools/ai_suggest/db.py`: read-only access: `sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)` (`as_uri` escapes spaces and `#`). Queries for users, a user's categories, `Ongecategoriseerd` transactions, all transactions (for collisions), few-shot rows, and active rules. The rules are loaded exactly as `Categorizer._load_rules`: global (`gebruiker_id IS NULL`) first, then user rules overriding the same lowercased term, and the insertion order is preserved (first match wins). **SaldoBoek's `DatabaseManager`/`Categorizer` aren't used**, because `DatabaseManager.__init__` writes (CREATE/seed) and would break read-only.
-- `tools/ai_suggest/rules.py`: `validate_zoekterm(term, group_texts)` (lowercase, ≥ 4 chars, no digits, substring of every group text), `fallback`, `collisions(term, categorie, all_tx)`, `shadowed_by(group_texts, rules)`.
+- `tools/ai_suggest/rules.py`: `validate_zoekterm(term, group_texts)` (lowercase, ≥ 4 chars, no digits, substring of every group text). **`choose_zoekterm(model_term, naam, group_texts)` (rev 3, PO amendment):** if `naam.strip()` has ≥ 4 chars → the zoekterm is `naam.strip().lower()`, digits allowed, and the model term is ignored (it's always a substring of every group text, because `rule_text` starts with the name and the group key is that name). Otherwise → the model term with `validate_zoekterm`, else `""` plus `zoekterm ongeldig`. There's no naam fallback any more, since the name was already tried first. `collisions(term, categorie, all_tx)`, `shadowed_by(group_texts, rules)`.
 - `tools/ai_suggest/prompt.py`: Dutch system prompt, few-shot block, per-group user message; `scrub()` replaces IBANs with `[IBAN]` in every string that goes into a prompt. It matches case-insensitively and allows optional single spaces between characters, so it also catches `nl00 knab 0000 0000 00` and lowercase forms. The AC13 test pattern (`[A-Z]{2}\d{2}[A-Z]{4}\d{10}`) is a subset.
 - `tools/ai_suggest/llm.py`: `LLMClient(endpoint, model, api_key, timeout)` with `suggest(messages, schema) -> dict`, stdlib `urllib.request`. **Network confinement:** the opener is built with `urllib.request.build_opener(ProxyHandler({}), NoRedirect())`, so it ignores `http_proxy`/`https_proxy`/`all_proxy`, and any 3xx raises `LLMError` (`NoRedirect` is a `HTTPRedirectHandler` subclass whose `redirect_request` raises). `check_endpoint(url)` accepts only the `http` scheme with host `127.0.0.1`, `::1` or `localhost`; anything else → exit 1 `endpoint moet lokaal zijn (127.0.0.1/::1/localhost)`, before the DB is opened and before any request. The body has `temperature: 0`, `chat_template_kwargs: {enable_thinking: false}` and `response_format: {type: json_schema, json_schema: {name, schema}}`. Any HTTP/URL error, timeout, non-JSON content, missing key or a `categorie` outside the enum raises `LLMError`. It normalises `zekerheid`.
 - `tools/ai_suggest/gpu.py`: the GPU guard (below).
@@ -90,9 +90,9 @@ None for SaldoBoek. **New file format:** the review CSV, as the brief defines it
 | AC1 5 tx / 2 groups → 2 calls, rows 3 and 2 | `test_flow.py::test_two_groups_two_calls` |
 | AC2 invented category or free text → `model-fout` | `test_flow.py::test_model_error_flag` (both variants) |
 | AC3 enum per sign | `test_flow.py::test_enum_by_sign` |
-| AC4 `abonr.4163` → fallback `test streaming b.v.` / `zoekterm ongeldig` | `test_rules.py::test_digits_fall_back_to_naam`, `::test_invalid_when_fallback_fails` |
+| AC4 (amended): naam wins (`woning` → `test woonstichting`); empty naam + `abonr.4163` → `zoekterm ongeldig`; empty naam + valid `maandhuur` → `maandhuur` | `test_rules.py::test_naam_always_wins`, `::test_nameless_invalid_model_term`, `::test_nameless_valid_model_term`, `::test_short_naam_uses_model_term`; `test_flow.py::test_generic_model_term_replaced_by_naam` |
 | AC5 `sleutel` = shared helper | `test_flow.py::test_sleutel_matches_helper` |
-| AC6 `test` vs `Test Garage` in `Auto` → `botsing` | `test_flow.py::test_collision_flag` |
+| AC6 (amended): group `Test Garage` vs `Test Garage Onderdelen` in `Auto` → `botsing: 1 transacties in Auto` | `test_flow.py::test_collision_flag` |
 | AC7 rule `bakker` → `al gedekt door regel 'bakker'` | `test_flow.py::test_shadow_flag` |
 | AC8 no eGPU → exit 2, 0 requests | `test_gpu.py::test_no_egpu_exit_2_no_requests` |
 | AC9 VRAM < 4 GiB after the first call → exit 3 | `test_gpu.py::test_card_vram_low_exit_3`, `::test_model_process_vram_low_exit_3` |
@@ -145,3 +145,4 @@ No stored data changes (read-only). The high-stakes output is the **review CSV**
 ## Revision notes
 
 - Rev 2 (after `02-spec-review.md`, changes requested): **network confinement** (R1): a proxy-free, no-redirect opener, a loopback-only `--endpoint` checked before the DB is opened, and three tests. Logged the post-check-after-success deviation (Decision 6). Folded in the gate's notes: distinct exit-3 messages (N1), spill warning repeated in the summary (N2), seeded rules removed in the test DB builder (N4), NULL category ≠ collision (N5), decimal comma in the CSV (N6), per-group timing lines (N7), broader IBAN scrub (N8), `as_uri()` (N9), a `zekerheid` range flag and a 300 s timeout (N10).
+- Rev 3 (PO amendment, Joost, 2026-09-18, during fix round 1, see `00-brief.md`): the zoekterm is the full lowercased counterparty name whenever the name has ≥ 4 chars; the model's zoekterm is used only for nameless or too-short-name groups. Triggered by AC14 real output (`woning`, `salaris`, `de hoek`). This is the second and last allowed spec revision cycle.
