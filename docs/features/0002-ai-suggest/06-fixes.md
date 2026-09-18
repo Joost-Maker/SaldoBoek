@@ -63,3 +63,11 @@ The run was parked at the code-gate cap (review 2: R5, over-masking from the rou
 Mutation check: with the over-masking version, 7 of the 9 negative cases fail; with the fix, all 18 scrub tests pass.
 
 Test command after round 3: `.venv/bin/python -m pytest -q` → green (82 passed).
+
+### AC14 re-run on the final code (after round 3), with the service started and stopped again for the run
+
+```
+eGPU card0: 11.0/15.9 GiB in gebruik, model (pid 598593) 10.6 GiB resident
+8 groups, mean 2.1 s/call (first 9.6 s, then ~1 s), exit 0, no flags, no spill warning
+```
+All 8 zoektermen are the full counterparty names (PO amendment works end to end). The review CSV is `-rw-------`. Same quality note as before: `Test Apotheek Centrum` → Boodschappen (0.95) although `Zorg` exists; the review step catches it. **AC14 passes on the final code.**
