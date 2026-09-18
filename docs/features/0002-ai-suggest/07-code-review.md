@@ -59,4 +59,37 @@ Test accretion: every automatable AC has a committed permanent test, and both `m
 - **N4, for the sign-off and the 0003 brief:** E1 residue (prefix overlap between rows of one review file, generic model terms for short-name and nameless groups) and N21 (a mixed-sign counterparty gives two rows with the **same** zoekterm, and `UNIQUE(zoekterm, gebruiker_id)` means only one can become a rule). None of this is flagged in the CSV. R2-3 (re-running with the same explicit `--out` overwrites a reviewed file) belongs in the same list.
 - **N5, low:** R2-2 (a named group loses a valid category when the unused model zoekterm is null; GBNF prevents this when the model is live), F1 (`zekerheid` 1.5 → 0,01 with no flag, per spec Decision 3), E4 (control characters in the printed name). `--sysfs-root` (E5) is a flag the brief itself requires, so it isn't a finding. The post-check runs once per run, not per call, which is what the spec says.
 
+Review 1 outcome: changes requested (R1 to R4). See the re-review below.
+
+## Re-review (after fix round)
+
+**Diff:** `git diff dev...HEAD` (now through `5a77b1f`, 26 files, +2846). The fix commit `5a77b1f` touches `prompt.py`, `review.py`, `__main__.py`, two test files and three docs. `saldoboek/` is still untouched. The commit subject references `0002-ai-suggest`. **Date:** 2026-09-18.
+
+**Honesty spot-check:** `.venv/bin/python -m pytest -q` → **64 passed** (25.4 s), which matches `06-fixes.md` round 2.
+
+### Required changes from review 1
+
+| # | Resolved? | Evidence |
+|---|---|---|
+| R1 IBAN padded/glued | **Yes for the IBAN cases, but the fix broke something else (R5)** | `prompt.py:33-34` now collapses whitespace before it masks. `IBAN_RE` (`prompt.py:14`) allows ` `, `.` and `-` between characters and has no leading boundary. `test_flow.py::test_no_iban_in_requests_padded_and_glued` covers double space, tab, NBSP, dashes, dots, glued `IBANNL…`, and a padded IBAN in a few-shot row. I checked the few-shot path: `fewshot_examples` uses the same `scrub`. |
+| R2 NULL category as input | Yes, via route (a) | `__main__.py:60` uses `tx.categorie != UNCATEGORIZED`. `is_uncategorized` is still used for collisions (`rules.py:50`) and few-shot (`prompt.py:48`), as spec review N5 intended. `test_flow.py::test_null_category_not_grouped` inserts a real NULL through `conftest.py:52-60`, then asserts 0 requests and 0 rows. "Deviations: None" in the log is accurate again. |
+| R3 `<out>.tmp` link into the DB | Yes | `review.py:35-47` uses `mkstemp` in the output directory (O_EXCL, random name), `os.fdopen`, then `os.replace`, and unlinks the temp file on any exception. `os.replace` swaps a directory entry, so even a hardlinked `--out` can't reach the DB inode. `test_io.py::test_tmp_symlink_to_db_cannot_overwrite` asserts the DB's SHA-256 is unchanged and the symlink is untouched. The side effect is a 0600 review file, logged as Decision 8 and pinned by `test_review_file_is_private`. It's reversible and sensible for a file that holds bank data. |
+| R4 stale protocol | Yes | `04-test-protocol.md` now cites spec rev 3 and the amended brief. Its AC4/AC6 rows name the round-1b tests, which exist. Case 2.1, case 2.4 and the high-stakes rows describe the amended behaviour. The AC10 and AC13 rows and two new FR rows list the new tests. I checked every test name in the table against `tests/ai_suggest/`, and all of them exist. |
+
+### New finding
+
+- **R5 (required): the new `IBAN_RE` over-masks ordinary descriptions and wipes the model's context.** Dropping the leading boundary (`prompt.py:14`), allowing `.`/`-`, and leaving no trailing boundary means the pattern matches wherever the last two letters of *any* word are followed by a number and ~11 more alphanumeric characters. The pattern then eats up to 30 characters. I ran `scrub` on synthetic strings (no DB, no endpoint):
+  - `Factuur 2026-00123 abonnement oktober` → `Factu[IBAN]`
+  - `Termijn 3 van 12 maanden huur` → `Termijn 3 v[IBAN]`
+  - `Omschrijving: huur okt 2026 woning 12a` → `Omschrijving: huur o[IBAN]`
+  - `Kenmerk 1234567890123456 Test Energie` → `Kenme[IBAN]`
+
+  The pre-fix pattern left all four intact. Any description or name with a year, invoice number or kenmerk after a word loses most of its text. That is exactly the text the model needs to pick a category, and it's how the model picks a zoekterm for nameless groups. No hard line is crossed (masking more is privacy-safe), but it silently degrades the feature's main output. AC14's plausibility check ran on the pre-fix code, so nothing has caught this. **Change:** restore the boundaries without losing the glued case. For example, `(?:(?<=IBAN)|(?<![A-Z0-9]))[A-Z]{2}[ .\-]?\d{2}(?:[ .\-]?[A-Z0-9]){11,30}(?![A-Z0-9])` with `re.IGNORECASE`. I checked that exact pattern: it still masks all seven variants in `test_no_iban_in_requests_padded_and_glued` plus `iban: nl00knab0000000000`, and it leaves the four strings above unchanged. Any equivalent pattern is fine. Add a permanent test (e.g. `test_prompt`-style, in `test_flow.py` or `test_io.py`) that asserts `scrub` keeps those non-IBAN strings intact, so the IBAN tests can't be satisfied by masking everything. Add a row to `06-fixes.md` and the protocol's 2.4 row.
+
+### Rest of the diff
+
+- No other regressions from the fix round. `build_groups`, `check_output`, the GPU guard, loopback confinement and stdout hygiene are unchanged, and the hard-lines table from review 1 still holds. Stdout never goes through `scrub`, so R5 affects only prompt quality.
+- **N6 (note):** in `review.py:36-47`, if `os.fdopen` itself raised, the raw fd would leak. That's negligible for a one-shot CLI and not a finding. The Decisions table lists row 8 between rows 3 and 4 (cosmetic, like N1).
+- Notes N3 to N5 from review 1 stay open for the sign-off and the 0003 brief. N3 (an unwritable `--out` directory is only discovered at the end) is still true: `mkstemp` now raises at write time, after all the model calls.
+
 Verdict: changes requested
