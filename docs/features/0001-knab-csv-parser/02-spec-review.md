@@ -51,3 +51,34 @@
 3. (Recommended in the same revision) add the legacy `saldoboek/parsers/` package to the Decisions note as deliberately untouched.
 
 Verdict: changes requested
+
+---
+
+## Re-review (spec rev 2)
+
+**Mode:** spec gate (Phase 2), re-review
+**Reviewed:** `00-brief.md`, `01-spec.md` (rev 2), the rev 1 review above, `CLAUDE.md`, and the code again (`saldoboek/core/importer.py`, `core/parsers/{__init__,rabo_parser}.py`, `core/__init__.py`, `core/database.py`, `core/categorization.py`, `config/bank_parsers.py`, `saldoboek/parsers/__init__.py`, `tests/test_smoke.py`, `.gitignore`, `README.md`). No real bank data or `*.db` files were opened. Baseline `.venv/bin/python -m pytest -q`: 1 passed.
+
+### Required changes from rev 1
+
+1. **`.gitignore` `*.csv` conflict: resolved (option b).** Fixtures are generated into `tmp_path` by a `knab_csv` factory in `tests/conftest.py`, and no `.csv` is committed (`01-spec.md:21`). `.gitignore` is explicitly left untouched, so the real-data protection stays intact (`01-spec.md:36`). `git check-ignore` confirms that none of the planned files (`tests/conftest.py`, `tests/test_knab_{parser,import}.py`, `core/parsers/knab_parser.py`) is ignored. The departure from the brief's "fixtures live under `tests/fixtures/knab/`" is a test-layout choice. The brief's Ambiguity guidance delegates that ("test file layout, pytest fixtures and conftest structure"), and the spec commits to logging it. The fixtures still travel with the tests, as Python data, so the brief's upstream-PR contents ("parser, tests, fixtures and the README line") remain satisfiable.
+2. **`tests/test_smoke.py` in "Files to modify": resolved** (`01-spec.md:32`). The file list and the "no changes outside the files listed" claim are now consistent.
+3. **Legacy `saldoboek/parsers/` as deliberately untouched: resolved** (`01-spec.md:35`). This matches the code: `saldoboek/parsers/__init__.py:6-7` imports modules that don't exist.
+
+Rev 1 build notes folded in: `newline=""` (step 1), an explicit `account_type` in every test (Test scope), and the reason for the 20-row detection window (`01-spec.md:50`). All correct.
+
+### Whole-spec pass
+- **Coverage:** every FR and AC1–AC9 still maps to a location and a named test (`01-spec.md:62-80`). AC9 is correctly `manual:`. OK.
+- **Creep:** none. The only non-parser code touched is detection in `detect_bank_and_parse` (a filename branch after SNS/RABO at `importer.py:32-35`, plus a content check in the `else` before the legacy loop at `importer.py:36-40`). That is exactly the detection change the brief allows. Unknown-format behaviour for non-Knab files is unchanged: they still reach `raise ValueError("Onbekend bankformaat…")` at `importer.py:42`. No schema, GUI, categoriser or existing-parser changes. OK.
+- **Open questions:** "(none)". OK.
+- **Architecture:** Python 3.8, no GUI imports in tests, synthetic data only, constants at module level, and the high-stakes sign impact is declared with mitigations. `DatabaseManager(db_path=tmp_path/…)` is isolated from the real `saldoboek/data/database.db`, because every connection uses `self.db_path` (`database.py:19-29`). OK.
+- **Testability:** the ValueError-propagation path is verified. `importer.py:64-68` catches the error and `continue`s, so AC3's "0 stored" holds with no importer change. `row["datum"].strftime` (`importer.py:77`) requires Timestamps, and step 7's `pd.to_datetime` provides them. OK.
+
+### Notes (non-blocking; apply during the build, and the code gate will check the first one)
+- **Log the fixture-layout decision** (generated in `tmp_path` instead of committed under `tests/fixtures/knab/`) in the Decisions table of `03-implementation-log.md`, with the rejected alternative (a narrow `.gitignore` negation). Without that entry the code gate will count it as an undocumented deviation from the brief.
+- **Step 3, "cut or padded to the header length":** only cut trailing cells that are empty. If a cell beyond the header length is non-empty, raise a `ValueError` instead of dropping it silently. That matches the spec's own principle that silent loss is as wrong as a wrong sign.
+- **AC5 preamble fixture:** with `csv.reader`, a preamble line containing an unbalanced `"` would swallow the following lines, header included. Keep the AC5 fixture's preamble quote-free, and add an unbalanced-quote preamble to the bug-hunt edge files so the behaviour is at least known.
+- **Summary print on an empty result** (header-only file, which is on the bug-hunt list): guard the "period" line the way `rabo_parser.py:179` does, so `.min().strftime` isn't called on an empty frame.
+- **Upstream PR contents:** `tests/test_smoke.py` came in with the fork scaffold commit. When Joost cuts the upstream branch, it's his call whether it goes along. That isn't something this run decides.
+
+Verdict: approved with notes
