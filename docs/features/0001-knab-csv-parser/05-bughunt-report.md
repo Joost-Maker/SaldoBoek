@@ -258,3 +258,121 @@ Routing was checked by patching `KnabParser/RaboParser/SNSParser.parse_csv` with
 4. 🟡 E-3: validate `Bedrag` strictly against `^\d{1,3}(\.\d{3})*(,\d+)?$|^\d+(,\d+)?$` before `float()`, so signed, dot-decimal, NaN/inf, exponent and non-ASCII digits raise `ValueError`.
 5. 🟡 E-5: reject data rows with fewer fields than the header (mirror of the "meer gevulde velden" check), apart from fully blank lines.
 6. 🟢 E-6: catch non-`ValueError` parse failures (or check for duplicate header names) so a malformed file is skipped rather than aborting the import loop.
+
+---
+
+## Round 2
+
+**Date (UTC):** 2026-09-18T09:03:09Z
+**Scope (scoped re-hunt):** (1) re-test the round-1 fixes exactly as reproduced: BUG-1 (every quoted-preamble variant), E-2 (empty dates, including the multi-file import), and the header-column part of the missing/renamed-column finding. `06-fixes.md` calls that part "E-3 (header part)". In this report's round-1 numbering it is **E-4**; E-3 here is the amount-format finding. (2) Re-run the protocol's High-priority cases 1.1, 1.2, 1.3, 1.9, 1.10, 1.11, 2.1, 2.2, 2.4, 2.5 and the high-stakes table. (3) A short exploratory pass aimed at the fix itself.
+**Not re-run:** Normal/Low cases 1.4–1.8, 1.12 (covered by BUG-1 below), 1.13, 2.3, 2.6, 2.7 (the multi-file skip is exercised by the E-2 re-test). E-1 is out of scope by PO decision (tracked as a separate DEV item) and is not re-reported. Round-1 🟡/🟢 (E-3, E-5, E-6) were not re-hunted. Spot checks show none of them got worse (see the end of the exploratory pass).
+
+### Environment
+- Driver: headless `.venv/bin/python` (3.12.3, pandas 3.0.6), no browser, as in round 1. Branch `feat/0001-knab-csv-parser` @ `73af795` (fix commit `a8afdf2`). Baseline `pytest -q`: **26 passed**.
+- Test data: 100% synthetic, written into a `mktemp -d` scratch dir outside the repo using `tests/conftest.py` (`knab_row`, `render_knab`, `KNAB_HEADER`). Each case uses a fresh `DatabaseManager(db_path=Path(<tmp>)/"t.db")`. No real export, no `saldoboek/data/database.db`, nothing under `~/Code/Financien`.
+- Harness: `parse(p)` = `KnabParser().parse_csv(str(p), "betaalrekening")` with any exception captured as `Type: message`. `do_import(imp, paths)` = `imp.import_transactions_with_categorization([...], 1, "betaalrekening")[0]` with exceptions captured. `rows_in(imp)` = `SELECT datum, rekening, bedrag, omschrijving FROM transacties ORDER BY id`. `<tmp>` below stands for the scratch path.
+
+### Re-test of fixed findings
+
+#### BUG-1 quoted preamble: ✅ resolved
+- **Tested:** a 3-row file (A `6,5` "een", B `1234,56` "twee", A `3` "drie") named `Knab Transactieoverzicht k.csv`, written with `render_knab(rows, preamble=P)` for 10 preambles, then `parse`. The two round-1 failing preambles were also run through the full import, under both `Knab Transactieoverzicht k.csv` (filename path) and `export.csv` (header-detection path). Each import was followed by an import of the same rows *without* the preamble into the same DB, which is the round-1 double-count repro.
+- **Actual:**
+  | Preamble `P` | Result |
+  |---|---|
+  | `"Export van Knab` (round-1 fail) | `ValueError: Knab-header in <tmp>/… mist kolom(men): Rekeningnummer` |
+  | `"Export;van Knab` (round-1 fail) | same ValueError |
+  | `x;"` · `"` · `"KNAB EXPORT` · `"Export\r\nregel2` | same ValueError |
+  | `Export van "Knab` · `"a"b` · `KNAB EXPORT` · `"Export van Knab"` (balanced or mid-field quote) | OK, 3 rows, `rekening=['NL00KNAB0000000000']`, bedrag `[-6.5, 1234.56, -3.0]` |
+  Import, both filenames: the first import prints `! Knab-header in … mist kolom(men): Rekeningnummer` and returns `0`. The clean re-import returns `3`. Final `count 3`, `sum 1225.06`, the correct total. Round 1 got 6 rows and 2450.12. No wrong data is stored.
+- **Severity:** ✅ pass. Every unbalanced-quote variant is now rejected with a clear message, and balanced variants still parse correctly.
+
+#### E-2 empty dates: ✅ resolved (as reproduced in round 1; see R2-1 for a variant the fix misses)
+- **Tested (parser):** `knab_row(datum="", boekdatum="")` between valid rows; the same with whitespace-only dates; a file where every row has no date; and two rows that must still pass: Transactiedatum empty with Boekdatum `16-09-2026` (fallback), and Transactiedatum set with Boekdatum empty.
+- **Actual:** the first three raise `ValueError: 1 rij(en) zonder Transactiedatum en Boekdatum in <file>` (`2 rij(en)` for the all-rows file). The fallback row gives `datum=['2026-09-17', '2026-09-16']`. Transactiedatum set with Boekdatum empty gives `['2026-09-17']`.
+- **Tested (multi-file import, round-1 repro):** `Knab NoDate.csv` = [r1, r2, r3 no date, r4], `Knab Other.csv` = [o1 A `11`, o2 B `22`], `Knab Third.csv` = [t1 A `5`], in one call, in three orders (bad first, middle, last), each into a fresh DB.
+- **Actual (all three orders):** no exception. Returns `3`. The bad file prints `! 1 rij(en) zonder Transactiedatum en Boekdatum in …NoDate.csv` and is skipped whole. Stored: `[('o1', -11.0), ('o2', 22.0), ('t1', -5.0)]`, so none of r1/r2 are partially imported and later files are still processed.
+- **Severity:** ✅ pass
+
+#### E-4 missing/renamed header columns (the "E-3 header part" in 06-fixes): ✅ resolved
+- **Tested:** each of the 15 columns removed in turn from both the header and the data row (`render_knab([row_minus_i], header=KNAB_HEADER minus i)`), plus 8 renames of mapped columns.
+- **Actual:**
+  - Removing any mapped column raises `ValueError: Knab-header … mist kolom(men): <name>`. Mapped columns: Rekeningnummer, Transactiedatum, Valutacode, Bedrag, Tegenrekeningnummer, Omschrijving, Boekdatum.
+  - Removing a marker column (CreditDebet, Tegenrekeninghouder) raises `Geen Knab-header gevonden`.
+  - Removing an unused column (Valutadatum, Betaalwijze, Type betaling, Machtigingsnummer, Incassant ID, Referentie) still parses, with `rekening=['NL00KNAB0000000000']` and bedrag `[-6.5]`. That is correct, because the parser doesn't read those columns.
+  - All renames are rejected with the right column named: `Rekening nummer`, `rekeningnummer`, `Bedrag (EUR)`, `Transactie datum`, `Valuta`, `Tegenrekening`, `Omschrijving 1`, `Boek datum`.
+  - Header-detected `export.csv` without Rekeningnummer, imported: `(0, None)`, count 0.
+- **Severity:** ✅ pass
+
+### High-priority protocol cases (regression)
+
+| Case | Input / call | Observed | |
+|---|---|---|---|
+| 1.1 | bytes start `\xef\xbb\xbf"Rekeningnummer";"Transacti…`; A `6,5` + B `1234,56` | 9 standard columns, bedrag `[-6.5, 1234.56]`, datum `2026-09-17` ×2, saldo_voor `[0.0, 0.0]`, rekeningtype `betaalrekening`, no `Unnamed` | ✅ |
+| 1.2 | A `1.234,56` | `[-1234.56]` | ✅ |
+| 1.3 | valid row + `Onbekend` / `""` / `afschrijvingen` / `Afschrijving` | each → `ValueError: Onbekende CreditDebet-waarde(n) …: '<value>'`, no DataFrame | ✅ |
+| 1.9 | the 12-row mixed month from round 1 (`0,01` … `12.345.678,9`), `Decimal` hand calculation | all 12 exact. Debits hand −12347023.47 = parser −12347023.47. Credits 3616.96 = 3616.96. Imported: 12 rows, DB `SUM` −12343406.51 = hand | ✅ |
+| 1.10 | `…;"X"` in the 16th column; `…;"";"Y";` in the 17th; `…;"";"";` control | `ValueError: Rij 2 … heeft meer gevulde velden dan de header` ×2. Control: OK, 1 row | ✅ |
+| 1.11 | valid + `abc`; valid + `2026/09/17` (all dates); valid + Transactiedatum `2026/09/17` with Boekdatum `17-09-2026` | `Onleesbaar bedrag …: 'abc'`; `Onleesbare datum …: time data "2026/09/17" doesn't match format "%d-%m-%Y"` ×2; no DataFrame | ✅ |
+| 2.1 | `Knab Transactieoverzicht Test NL00KNAB0000000000 - 2026-01-01 - 2026-09-17.csv` | routed `['Knab']` (patched recorders); unpatched: bedrag `[-6.5, 1234.56]`, rekening `NL00KNAB0000000000` | ✅ |
+| 2.2 | same content as `export.csv` | routed `['Knab']` via header; unpatched: same output | ✅ |
+| 2.4 | `Knab Transactieoverzicht Bad.csv` = [valid, `Onbekend 10`, B `5`] → import | `! Onbekende CreditDebet-waarde(n) …`, returns `0`, count 0 | ✅ |
+| 2.5 | 3-row file imported twice into one DB | `3` (count 3), then `0` with `! 3 duplicaten overgeslagen` (count 3); stored −6.5 / 1234.56 / −12.95, rekening `NL00KNAB0000000000` | ✅ |
+
+**High-stakes table:** sign A `6,5` → −6.5 ✅ · sign B `1234,56` → 1234.56 ✅ · thousands A `1.234,56` → −1234.56 ✅ · small B `0,01` → 0.01 (1.9) ✅ · `Onbekend` → ValueError, 0 stored (1.3, 2.4) ✅ · datum `17-09-2026` → 2026-09-17 ✅. **No regressions.** `pytest -q`: 26 passed.
+
+### Exploratory pass (aimed at the fix)
+
+**Timebox:** ~10 min · **Focus:** can the required-columns check or the empty-date check reject a valid Knab file (false positive), or be bypassed so wrong data still imports silently?
+
+#### [exploratory] R2-1 The empty-date check only tests the *text*. Null-like and relative date tokens slip past it: `nan`/`NaT` bring back the E-2 crash, and `now`/`today` import silently with today's date
+- **Tested:** `parse(write("Knab k.csv", [knab_row(omschrijving="r1"), knab_row(omschrijving="r2", datum=V, boekdatum=V)]))` for V in `NaT, nat, nan, NaN, None, none, null, NULL, now, today, <NA>, N/A, -`. The bad tokens were then run through the import.
+- **Expected:** the parser's contract says an unreadable date raises `ValueError` with no partial result, and that is what the E-2 fix is meant to guarantee.
+- **Actual:**
+  - `None`, `none`, `null`, `NULL`, `<NA>`, `N/A`, `-` → correct `ValueError: Onleesbare datum …`.
+  - `NaT`, `nat`, `nan`, `NaN` → **parse succeeds** with `datum=['2026-09-17 00:00:00', 'NaT']`. `pd.to_datetime(..., format="%d-%m-%Y", errors="raise")` treats these strings as missing, and the new check only looks for `datum_tekst == ""`. On import the round-1 crash comes back unchanged. `Knab Bad.csv` = [r1, r2, r3 `nan`, r4] plus `Knab Other.csv` in one call gives an uncaught `ValueError: NaTType does not support strftime` from `importer.py` `row["datum"].strftime(...)`, which sits outside the `try`. Stored: `['r1', 'r2']`. r4 is lost and `Other.csv` never runs (the same for `NaT`). One more case: Transactiedatum `NaT` with a valid Boekdatum `16-09-2026` does **not** fall back to Boekdatum, because the fallback only applies to `""`. A single-row file like that fails with `ValueError: NaTType does not support strftime`.
+  - `now`, `today` → **parse and import succeed**, and the row is stored with today's date: `rows_in` = `[('2026-09-17', …, 'r1'), ('2026-09-18', …, 'r2')]`. That is silent wrong data. The parser output also carries a time component (`2026-09-18 11:02:26.846747`).
+- **Severity:** 🟡 Medium. The consequences match E-2 (partial import, later files aborted) or are silent wrong data (`today`). But the trigger is a literal `nan`/`NaT`/`now`/`today` string in a Knab date column, which a real Knab export never contains and which is less plausible than E-2's empty fields. It needs a hand-edited or script-generated file. This is the same class as the round-1 E-3 amount forms. The reproduced E-2 cases themselves are fixed.
+- **Suggested fix (not applied):** validate the date text strictly (`^\d{1,2}-\d{1,2}-\d{4}$`) before `pd.to_datetime`, and/or `if datum.isna().any(): raise ValueError(...)` afterwards. Only the regex catches `now`/`today`.
+- **Console errors:** `ValueError: NaTType does not support strftime` (uncaught, from `saldoboek/core/importer.py` line 84 `datum_str = row["datum"].strftime("%Y-%m-%d")`) for the `nan`/`NaT` import. None for `today` (silent).
+- **Reproduction:**
+  1. `write("Knab Bad.csv", [knab_row(omschrijving="r1"), knab_row(omschrijving="r2"), knab_row(omschrijving="r3", datum="nan", boekdatum="nan"), knab_row(omschrijving="r4")])` and a valid `Knab Other.csv` in the same dir.
+  2. `imp.import_transactions_with_categorization([bad, other], 1, "betaalrekening")` → raises. `SELECT omschrijving FROM transacties` → `r1, r2`.
+  3. `today` variant: `knab_row(datum="today", boekdatum="today")` → import → stored `datum = '2026-09-18'`.
+
+#### [exploratory] False-positive probes: no findings
+The required-columns check was run against valid Knab data in these format variations. Each was parsed as `export.csv` (header-detection path) and compared to the reference parse on `datum, rekening, tegenrekening, naam, valuta, bedrag, omschrijving`. All returned OK and `equals(reference) == True`:
+- extra unknown column at the end, with data
+- extra unknown column in the middle
+- all 15 columns in reverse order
+- unquoted fields with no trailing `;` and LF line endings
+- header names padded with spaces (`" Rekeningnummer "`)
+- no final newline
+- two blank lines plus a `KNAB EXPORT` preamble
+- cp1252 without a BOM
+
+Removing unused columns also still parses (see the E-4 re-test above). I found no valid Knab layout that the new check rejects.
+
+#### [exploratory] Bypass probes on the header check: no findings
+- Every way I tried to merge a quoted preamble into the header left a trailing `"` or preamble text in the first header cell. None produced a clean `Rekeningnummer`, so all were rejected (BUG-1 table above).
+- A preamble row that contains only the two marker columns (`"CreditDebet";"Tegenrekeninghouder"`), above a valid header, is rejected (`mist kolom(men): Rekeningnummer, Transactiedatum, …`). Header search stops at the first marker row. That is a safe failure (no data) and not a realistic Knab layout, so it is not a finding.
+- Observation, not a finding: a well-formed header with an **empty Rekeningnummer value** in a data row still imports with `rekening=''`. This matches the brief's rule that empty fields become `""`, and Knab always fills this field. The fix was header-level by design.
+
+#### Round-1 backlog items: not worse
+- E-6 (duplicate column name): a 16th header column that repeats `Rekeningnummer` or `Bedrag` still raises the uncaught `AttributeError: 'DataFrame' object has no attribute 'str'`, which aborts a multi-file import (count 0, the valid second file not imported). A duplicated *unused* column (`Valutadatum`) parses fine. This is unchanged from round 1 and still 🟢. The new required-columns check neither caused nor fixed it.
+- E-3 and E-5 were not re-hunted. The fix diff doesn't touch `_convert_dutch_currency` or row padding.
+
+### Summary (Round 2)
+
+| # | Issue | Severity | Location |
+|---|-------|----------|----------|
+| — | BUG-1 quoted preamble: **resolved** (all 6 unbalanced variants rejected, clean re-import stores the correct 3 rows) | ✅ | `knab_parser.py` `_read_knab_table` |
+| — | E-2 empty dates: **resolved** for empty/whitespace dates, incl. the multi-file import in 3 orders | ✅ | `knab_parser.py` `_process_knab_data` |
+| — | E-4 (the "E-3 header part" in 06-fixes) missing/renamed columns: **resolved** for all 7 mapped columns and 8 renames | ✅ | `knab_parser.py` `_read_knab_table` |
+| R2-1 | Date tokens `nan`/`NaT` bypass the empty-date check (E-2 crash returns: partial import, later files aborted); `now`/`today` import silently as today's date | 🟡 | `knab_parser.py` `_process_knab_data` (check on text `""` instead of on the parsed result / strict format) |
+
+**Headline counts (Round 2):** 0 🔴 · 0 🟠 · 1 🟡 · 0 🟢
+**Protocol coverage:** scoped re-hunt. High cases 1.1, 1.2, 1.3, 1.9, 1.10, 1.11, 2.1, 2.2, 2.4, 2.5 and the high-stakes table re-run, all ✅. Not re-run: 1.4–1.8, 1.13, 2.3, 2.6, 2.7 (1.12 is covered by the BUG-1 re-test, and the 2.7 skip path by the E-2 multi-file re-test). E-1 is excluded by PO decision. Report not committed (caller instruction).
+
+### Recommended next steps (Round 2)
+1. No 🔴/🟠 open for this feature. BUG-1, E-2 and E-4 are fixed and the High cases show no regressions.
+2. 🟡 R2-1 (backlog candidate for the sign-off package): tighten the date check to a strict `dd-mm-yyyy` pattern before `pd.to_datetime`, or at least reject `datum.isna()` afterwards. This fits together with the E-3 strict-amount validation.
