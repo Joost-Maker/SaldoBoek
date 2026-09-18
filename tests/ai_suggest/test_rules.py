@@ -13,15 +13,33 @@ from tools.ai_suggest.rules import (
 TEXTS = ["test streaming b.v. termijnbetalingabonr.4163", "test streaming b.v. maand"]
 
 
-def test_digits_fall_back_to_naam():
-    # AC4
-    assert choose_zoekterm("abonr.4163", "Test Streaming B.V.", TEXTS) == ("test streaming b.v.", [])
+def test_naam_always_wins():
+    # AC4 (PO-amendement): algemene modelterm wordt vervangen door de volledige naam
+    texts = ["test woonstichting huur woning oktober"]
+    assert choose_zoekterm("woning", "Test Woonstichting", texts) == ("test woonstichting", [])
 
 
-def test_invalid_when_fallback_fails():
-    # AC4: naam te kort en modelterm ongeldig
-    texts = ["ab 123", "ab 456"]
-    assert choose_zoekterm("123", "AB", texts) == ("", ["zoekterm ongeldig"])
+def test_naam_with_digits_allowed():
+    texts = ["test winkel 1418 pinbetaling"]
+    assert choose_zoekterm("pinbetaling", "Test Winkel 1418", texts) == ("test winkel 1418", [])
+
+
+def test_nameless_invalid_model_term():
+    # AC4: lege naam + modelterm met cijfers -> leeg + vlag
+    texts = [" termijnbetalingabonr.4163"]
+    assert choose_zoekterm("abonr.4163", "", texts) == ("", ["zoekterm ongeldig"])
+
+
+def test_nameless_valid_model_term():
+    # AC4: lege naam + geldige modelterm in élke tekst
+    texts = [" maandhuur garagebox", " maandhuur garagebox oktober"]
+    assert choose_zoekterm("Maandhuur", "", texts) == ("maandhuur", [])
+
+
+def test_short_naam_uses_model_term():
+    texts = ["ah pinbetaling filiaal", "ah pinbetaling filiaal"]
+    assert choose_zoekterm("pinbetaling", "AH", texts) == ("pinbetaling", [])
+    assert choose_zoekterm("x", "AH", texts) == ("", ["zoekterm ongeldig"])
 
 
 def test_validation_rules():

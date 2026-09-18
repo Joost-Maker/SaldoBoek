@@ -79,22 +79,36 @@ def test_sleutel_matches_helper(sdb, run):
     ] == ["test streaming b.v.", "test bakker"]
 
 
-def test_digits_zoekterm_falls_back(sdb, stub, run):
-    # AC4 (eind-tot-eind)
-    sdb.add_tx("Test Streaming B.V.", "termijnbetalingAbonr.4163", -9.99)
-    stub.responder = lambda body: (200, {"categorie": "Abonnementen", "zoekterm": "abonr.4163", "zekerheid": 0.8})
+def test_generic_model_term_replaced_by_naam(sdb, stub, run):
+    # AC4 (PO-amendement, eind-tot-eind)
+    sdb.add_tx("Test Woonstichting", "Huur woning oktober", -912.4)
+    stub.responder = lambda body: (200, {"categorie": "Abonnementen", "zoekterm": "woning", "zekerheid": 0.9})
     code, out, csv_path = run()
     _, rows = read_review(csv_path)
-    assert rows[0]["zoekterm"] == "test streaming b.v."
+    assert rows[0]["zoekterm"] == "test woonstichting"
+    assert rows[0]["zoekterm"] == rows[0]["sleutel"]
+
+
+def test_nameless_group_uses_valid_model_term(sdb, stub, run):
+    # AC4: naamloze groep -> modelterm telt (na validatie)
+    sdb.add_tx("", "Maandhuur garagebox", -75.0)
+    sdb.add_tx("", "Maandhuur garagebox", -75.0)
+    stub.responder = lambda body: (200, {"categorie": "Abonnementen", "zoekterm": "maandhuur", "zekerheid": 0.8})
+    code, out, csv_path = run()
+    _, rows = read_review(csv_path)
+    assert rows[0]["sleutel"] == "maandhuur garagebox"
+    assert rows[0]["zoekterm"] == "maandhuur"
+    assert rows[0]["vlaggen"] == ""
 
 
 def test_collision_flag(sdb, stub, run):
-    # AC6
-    sdb.add_tx("Test Bakker", "Brood", -4.5)
-    sdb.add_tx("Test Garage", "APK", -60.0, categorie="Auto")
-    stub.responder = lambda body: (200, {"categorie": "Boodschappen", "zoekterm": "test", "zekerheid": 0.7})
+    # AC6 (PO-amendement): naam-zoekterm 'test garage' raakt ook 'Test Garage Onderdelen' in Auto
+    sdb.add_tx("Test Garage", "APK", -60.0)
+    sdb.add_tx("Test Garage Onderdelen", "Remblokken", -80.0, categorie="Auto")
+    stub.responder = lambda body: (200, {"categorie": "Boodschappen", "zoekterm": "apk", "zekerheid": 0.7})
     code, out, csv_path = run()
     _, rows = read_review(csv_path)
+    assert rows[0]["zoekterm"] == "test garage"
     assert "botsing: 1 transacties in Auto" in rows[0]["vlaggen"]
 
 

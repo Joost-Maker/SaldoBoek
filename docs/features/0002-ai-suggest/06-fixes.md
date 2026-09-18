@@ -26,3 +26,15 @@ eGPU card0: 11.0/15.9 GiB in gebruik, model (pid 565027) 10.6 GiB resident
 **Result: AC14 passes.** The model is resident on the RX 9060 XT (10.6 GiB, no spill), warm calls take ~1 s, and the proposals are plausible except one: `Test Apotheek Centrum` → Boodschappen (0.95), although `Zorg` exists. The review step catches that.
 
 **Real-output confirmation of backlog E1:** the proposed zoektermen included generic words: `woning` (Huur), `salaris`, `de hoek`, `supermarkt`. They pass validation (a substring of every group text, no collisions in this DB), but as permanent rules they would over-match future transactions (e.g. `woning` ⊂ "woningverzekering"). Escalated to the PO in the sign-off.
+
+## Round 1b: PO amendment, zoekterm = full counterparty name (spec rev 3, gate-approved)
+
+| Change | Files | Tests |
+|---|---|---|
+| `choose_zoekterm`: when the stripped name has ≥ 4 chars, it's always the lowercased full name (digits allowed, and it bypasses `validate_zoekterm` by design, N18). Only for a nameless or too-short-name group is the model's term used, with the original validation; else `""` plus `zoekterm ongeldig`. The old name fall-back is gone | `tools/ai_suggest/rules.py` | `test_rules.py::test_naam_always_wins`, `::test_naam_with_digits_allowed`, `::test_nameless_invalid_model_term`, `::test_nameless_valid_model_term`, `::test_short_naam_uses_model_term`; `test_flow.py::test_generic_model_term_replaced_by_naam`, `::test_nameless_group_uses_valid_model_term`, `::test_collision_flag` (rewritten to the amended AC6 fixture, not loosened) |
+
+Removed as obsolete (they described the dropped fall-back): `test_rules.py::test_digits_fall_back_to_naam`, `::test_invalid_when_fallback_fails`, `test_flow.py::test_digits_zoekterm_falls_back`.
+
+Noted for the sign-off and the 0003 brief (N20/N21): rows marked `model-fout` or `geen categorieën` keep the zoekterm blank. A counterparty with both income and expense rows gives two rows with the **same** zoekterm, but `categorisatie_regels` is `UNIQUE(zoekterm, gebruiker_id)`, so at most one can become a rule.
+
+Test command after round 1b: `.venv/bin/python -m pytest -q` → green (60 passed).

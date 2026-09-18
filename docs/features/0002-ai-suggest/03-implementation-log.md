@@ -29,6 +29,10 @@ Smoke check (no DB, no model): `check_endpoint` accepts `127.0.0.1`/`localhost`/
 | 7 | Test file layout: the spec named `test_cli.py`/`test_readonly.py`/`test_review.py`/`test_prompt.py`; those cases live in `tests/ai_suggest/test_io.py` | One I/O-boundaries file | Four small files | Moving tests is free; the protocol's coverage table names the real files |
 | 6 | Groups in a partial file after an abort | Every group attempted so far, including the failed ones (flagged `model-fout`) | Only successful groups | `__main__.py` loop |
 
+## PO amendment (spec rev 3)
+
+The zoekterm is name-first (see `06-fixes.md` round 1b). The spec's "High-stakes output impact" section and the "FR zoekterm validation + fallback" row still describe validation of every zoekterm. Under rev 3, that validation applies only to nameless or short-name groups, while named groups always get their exact name. That's narrower than any model term, so the over-match risk the high-stakes section worries about goes down (N19).
+
 ## Deviations from the spec
 
 None.
@@ -40,3 +44,5 @@ None.
 | baseline (phase 0, `dev`) | `.venv/bin/python -m pytest -q` | green (1 passed) |
 | phase 4, new suite | `.venv/bin/python -m pytest -q` | green (53 passed), first run |
 | phase 4, mutation check | remove the proxy block / IBAN scrub / per-process VRAM check, one at a time | each makes its guarding test fail; restored and green again (53 passed) |
+| fix round 1 (E2) | `.venv/bin/python -m pytest -q` | green (56 passed) |
+| fix round 1b (PO amendment) | `.venv/bin/python -m pytest -q` | green (60 passed) |

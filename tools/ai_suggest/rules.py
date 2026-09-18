@@ -24,11 +24,19 @@ def validate_zoekterm(term, group_texts):
 
 
 def choose_zoekterm(model_term, naam, group_texts):
-    """(zoekterm, flags): modelterm, anders naam als fallback, anders leeg."""
+    """(zoekterm, flags).
+
+    PO-besluit (2026-09-18): heeft de groep een tegenpartij-naam van ≥ 4 tekens,
+    dan is de zoekterm altijd die volledige naam (cijfers toegestaan: Knab
+    schrijft de naam steeds hetzelfde). Algemene modeltermen als 'woning' of
+    'salaris' zouden als vaste regel toekomstige transacties verkeerd raken.
+    Alleen bij een lege of te korte naam telt de modelterm, met de gewone
+    validatie.
+    """
+    naam_term = (naam or "").strip().lower()
+    if len(naam_term) >= MIN_ZOEKTERM_LENGTH:
+        return naam_term, []
     term = validate_zoekterm(model_term, group_texts)
-    if term:
-        return term, []
-    term = validate_zoekterm(naam, group_texts)
     if term:
         return term, []
     return "", ["zoekterm ongeldig"]
