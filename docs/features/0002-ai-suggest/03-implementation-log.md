@@ -48,3 +48,4 @@ None.
 | fix round 1 (E2) | `.venv/bin/python -m pytest -q` | green (56 passed) |
 | fix round 1b (PO amendment) | `.venv/bin/python -m pytest -q` | green (60 passed) |
 | code gate fix round | `.venv/bin/python -m pytest -q` | green (64 passed); new tests fail on the old code (mutation check) |
+| round 3 (R5, interactive) | `.venv/bin/python -m pytest -q` | green (82 passed); negative scrub tests fail on the over-masking version (7/9) |

@@ -10,8 +10,22 @@ MAX_TEXT = 120
 
 # IBAN in elke vorm die na het samenvouwen van witruimte overblijft: 2 letters,
 # 2 cijfers, dan 11-30 alfanumeriek, met hooguit één spatie/punt/streepje ertussen.
-# Geen woordgrens vooraan, zodat ook een vastgeplakt 'IBANNL00…' gevonden wordt.
-IBAN_RE = re.compile(r"[A-Z]{2}[ .\-]?\d{2}(?:[ .\-]?[A-Z0-9]){11,30}", re.IGNORECASE)
+# Grenzen aan beide kanten (anders wordt gewone tekst als 'Factuur 2026-00123 …'
+# gemaskeerd), met één uitzondering vooraan: direct na 'IBAN' (vastgeplakt 'IBANNL00…').
+IBAN_RE = re.compile(
+    r"(?:(?<=IBAN)|(?<![A-Z0-9]))[A-Z]{2}[ .\-]?\d{2}(?:[ .\-]?[A-Z0-9]){11,30}(?![A-Z0-9])",
+    re.IGNORECASE,
+)
+# Een echte IBAN heeft ≥ 10 cijfers (NL: 2 controle + 10 rekening; andere landen meer).
+# Kandidaten met minder cijfers zijn gewone tekst, bv. 'AH to go 1418 Amsterdam'.
+IBAN_MIN_DIGITS = 10
+
+
+def _mask_iban(match):
+    text = match.group(0)
+    if sum(ch.isdigit() for ch in text) >= IBAN_MIN_DIGITS:
+        return "[IBAN]"
+    return text
 
 SYSTEM_PROMPT = (
     "Je categoriseert Nederlandse banktransacties voor een huishoudboekje.\n"
@@ -31,7 +45,7 @@ def scrub(text):
     andersom zou een IBAN met rare witruimte het patroon ontlopen.
     """
     text = " ".join(str(text or "").split())
-    text = IBAN_RE.sub("[IBAN]", text)
+    text = IBAN_RE.sub(_mask_iban, text)
     if len(text) > MAX_TEXT:
         text = text[: MAX_TEXT - 1] + "…"
     return text

@@ -51,3 +51,15 @@ Test command after round 1b: `.venv/bin/python -m pytest -q` → green (60 passe
 Mutation check: with the old `prompt.py` and `review.py` restored, both new tests fail (2 failed); with the fixes, green.
 
 Test command after round 2: `.venv/bin/python -m pytest -q` → green (64 passed).
+
+## Round 3: after PARK, continued interactively with Joost's explicit OK ("ja maak af", 2026-09-18)
+
+The run was parked at the code-gate cap (review 2: R5, over-masking from the round-2 IBAN fix). Joost chose to finish it interactively; his approval replaces the cap, and the next code gate still runs in a fresh context.
+
+| Required change | Fix | Files | Regression test |
+|---|---|---|---|
+| R5: the IBAN pattern (no word boundaries) masked ordinary text, e.g. `Factuur 2026-00123 abonnement oktober` → `Factu[IBAN]` | The gate's pattern: boundaries on both sides, except a candidate directly after `IBAN` (glued form). **Plus a minimum-digit check found by the new negative test:** the gate's pattern still masked `AH to go 1418 Amsterdam` (`go 14` + `18 Amsterdam` fits the shape). A candidate is masked only if it has ≥ 10 digits; every real IBAN does (NL: 2 check + 10 account digits) | `tools/ai_suggest/prompt.py` | `tests/ai_suggest/test_prompt_scrub.py`: 10 IBAN forms masked (plain, lowercase, spaced, double-spaced, tab, NBSP, dashes, dots, glued `IBANNL…`, `iban: nl00…`), and **9 ordinary descriptions left exactly intact** (invoice numbers, "Termijn 3 van 12", "huur okt 2026 woning 12a", a 16-digit kenmerk, `Abonr.`, and pin descriptions like `AH to go 1418 Amsterdam`, `Jumbo 7042 Utrecht Centrum`) |
+
+Mutation check: with the over-masking version, 7 of the 9 negative cases fail; with the fix, all 18 scrub tests pass.
+
+Test command after round 3: `.venv/bin/python -m pytest -q` → green (82 passed).

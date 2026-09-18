@@ -26,7 +26,7 @@
 | AC10: DB SHA-256 unchanged, `mode=ro` | `test_io.py::test_db_hash_unchanged`, `::test_connection_is_readonly`, `::test_out_equal_to_db_refused`, `::test_out_via_symlink_to_db_refused`, `::test_out_must_be_csv`, `::test_tmp_symlink_to_db_cannot_overwrite` | 4.1 |
 | AC11: CSV header exact, `akkoord` empty | `test_io.py::test_header_and_empty_akkoord` | 4.2 |
 | AC12: 4 failures → abort + partial file | `test_flow.py::test_abort_after_four_failures_writes_partial` | 1.5 |
-| AC13: no IBAN in request bodies | `test_flow.py::test_no_iban_in_requests`, `::test_no_iban_in_requests_padded_and_glued` (double space, tab, NBSP, dashes, dots, glued `IBANNL…`, also in a few-shot row) | 2.4 |
+| AC13: no IBAN in request bodies | `test_flow.py::test_no_iban_in_requests`, `::test_no_iban_in_requests_padded_and_glued` (also in a few-shot row); `test_prompt_scrub.py::test_iban_forms_are_masked`, `::test_plain_text_is_left_intact` (negative side) | 2.4 |
 | AC14: `manual:` real GPU run on synthetic data | manual: needs the physical eGPU and the live model; not reproducible in CI | **5.1–5.4** |
 | AC15: `manual:` Joost's real run | manual: real data, Joost only | — (sign-off) |
 | FR input = only `Ongecategoriseerd` (NULL excluded) | `test_flow.py::test_null_category_not_grouped` | — |
@@ -59,7 +59,7 @@ Mutation check done during the build: removing the proxy block, the IBAN scrub, 
 | 2.1 | Zoekterm (amended) | named group (≥ 4 chars), model proposes anything | zoekterm = full lowercased name; for a nameless or < 4-char-name group, the model term only if it's valid (≥ 4, no digits, in every text), else empty + `zoekterm ongeldig` | High |
 | 2.2 | Collision | the proposed term also matches transactions in another category | `botsing: N transacties in <cats>`; `Ongecategoriseerd` and NULL don't count | High |
 | 2.3 | Shadow | an existing active rule already matches the group | `al gedekt door regel '<term>'` (the first rule in Categorizer order) | Normal |
-| 2.4 | IBAN scrub | descriptions with IBANs: plain, lowercase, spaced, double-spaced, tab, NBSP, dashes, dots, glued `IBANNL…` | no IBAN in any request body (whitespace is collapsed before masking) | High |
+| 2.4 | IBAN scrub | descriptions with IBANs: plain, lowercase, spaced, double-spaced, tab, NBSP, dashes, dots, glued `IBANNL…`; **and** ordinary descriptions with numbers (invoice numbers, "Termijn 3 van 12", `AH to go 1418 Amsterdam`) | every IBAN masked; ordinary text left **exactly** intact (`tests/ai_suggest/test_prompt_scrub.py`) | High |
 
 ### 3. GPU guard
 **Location:** `tools/ai_suggest/gpu.py`
