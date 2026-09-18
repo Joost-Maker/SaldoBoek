@@ -55,4 +55,40 @@ All 11 functional requirements and all 15 acceptance criteria are mapped (`01-sp
 - The test scope catches each AC failing, provided N4 is handled. It's fully offline with injected sysfs and proc roots.
 - Open questions for PO: none.
 
-Verdict: changes requested
+*Rev 1 outcome: changes requested (R1). The verdict line was moved to the end of the file, after the re-review below.*
+
+---
+
+## Re-review (spec rev 2)
+
+**Gate:** spec mode, re-review · **Reviewed:** `00-brief.md`, `01-spec.md` rev 2 (from commit `f29c865`; judged on the file, not the commit messages), `CLAUDE.md`, `saldoboek/core/database.py`, `saldoboek/core/categorization.py`, `saldoboek/config/categories.yaml`, and the layout of this machine's `/sys/class/drm` (listing only) · **Date:** 2026-09-18
+
+### R1 (network confinement): resolved
+
+- **Mechanism** (`01-spec.md:35`): `build_opener(ProxyHandler({}), NoRedirect())`, loopback-only `check_endpoint` with only the `http` scheme allowed, and 3xx → `LLMError`. **I verified this with the stdlib:** with `http_proxy`/`HTTP_PROXY`/`all_proxy` pointing at a dead port, the default opener fails (connection refused, so it did go through the proxy). The confined opener reaches a local server directly, and a subclass whose `redirect_request` raises turns a 302 into a `URLError`. `build_opener` drops its default `ProxyHandler` and `HTTPRedirectHandler` because instances of subclasses were passed in, so no default handler slips back in.
+- **Ordering** (`:53`): `check_endpoint` runs first, before the GPU pre-check and before the DB is opened. That matches R1 item 2.
+- **Tests** (`:81`): `test_ignores_proxy_env` (all three proxy variables), `test_redirect_refused`, and `test_non_loopback_endpoint_refused` (exit ≠ 0, 0 requests, DB never opened). This is a superset of what R1 asked for.
+
+### Earlier notes: folded in
+
+N2 (`:49`), N3 → Decision 6 (`:125`), N4 seed-rule deletion (`:38`), N5 (`:60`), N6 decimal comma (`:37`), N7 (`:60`), N8 (`:34`), N9 (`:32`; I checked that `as_uri()` gives `file:///tmp/a%20b%23c%3Fd%25e.db`), and N10 → Decisions 7 and 8 (`:126-127`) are all addressed. N1's distinct messages are in (`:48`). Two parts of the earlier notes aren't explicit in the spec and are repeated below as N11 and N12.
+
+### Full pass against the brief
+
+- **Coverage:** all 11 FRs, the network Out-of-scope line and all 15 ACs are mapped (`:74-104`), each with a named test or a manual route.
+- **Creep:** none. The new behaviour is the proxy-free opener, the loopback check, the `zekerheid ongeldig` flag, the 300 s timeout and the decimal comma. Each of these either enforces the brief's Out-of-scope or mission, or falls under a delegated item (flag strings, timeout values). `--proc-root` is test plumbing for the Decision 1 check that the earlier review accepted. Nothing writes to the DB, and no dependency is added.
+- **Open questions for PO:** none (`:141`).
+- **Architecture:** CLAUDE.md rules hold. The code is fork-only under `tools/`, nothing changes in `saldoboek/`, the syntax is Python 3.8, tests import no GUI, and all data is synthetic. The rule-loading mirror still matches `categorization.py:12-37`. `categories.yaml` has only `inkomsten`/`uitgaven` sections, so the sign filter on `categorieen.type` is sound. The DB isn't WAL (no journal pragma in `database.py`), so opening it with `mode=ro` leaves no side files and the SHA-256 in AC10 is stable.
+- **Testability:** each AC has a test that would fail if the criterion broke. Tests run offline with injected sysfs and proc roots and a stub server.
+
+### Notes for the builder (no revision needed)
+
+- **N11 (carried over from N4): stdout tests must capture only the tool's output.** The conftest builds the DB through `DatabaseManager`, which prints `[DEBUG] Gebruikte database: …` (`database.py:26`, `:202`) and `Gebruiker '…' actief…` (`:396`). Build the DB before `capsys`/`capfd` starts capturing, or clear the captured output first. Otherwise `test_stdout_has_no_descriptions` checks the wrong text. Also note that each new `DatabaseManager(...)` re-seeds the global rules (`database.py:141-147`), so build the DB once and delete the seeded rules afterwards.
+- **N12 (carried over from N1):** the requirement mapping (`:98`) names only the two "VRAM low" exit-3 tests. Also cover the `model-proces niet gevonden` and `fdinfo onleesbaar` messages in `test_gpu.py` using the fake proc tree.
+- **N13, stdout for groups with no `naam`:** when `naam` is empty, the group key is the `omschrijving` (brief FR grouping). The progress line `[i/n] <naam> …` (`:60`) and the summary must then **not** fall back to the key. Print a placeholder such as `(geen naam) #<groep>` instead, or the description reaches stdout, which the brief forbids ("no transaction contents on stdout beyond the counterparty name and totals"). Add an empty-`naam` group to `test_stdout_has_no_descriptions`. The CSV `sleutel`/`voorbeeld_omschrijving` columns are allowed per the brief.
+- **N14, `check_endpoint` parsing:** compare `urllib.parse.urlsplit(url).hostname` exactly, not a string prefix. `http://127.0.0.1@evil.com:6767` has hostname `evil.com`, and `http://127.0.0.1.evil.com` must fail. Also pin down the port used by the per-process `--port` match when the URL has none (`urlsplit` gives `None`): either require an explicit port, or use 80 and log that choice.
+- **N15, eGPU discovery:** `/sys/class/drm/card*` also matches connector entries (`card0-DP-5`, `card1-eDP-1`, …, seen on this machine). Their `device` link points at `../../card0`, not at the PCI device. They have no `mem_info_vram_total`, so the scan is harmless. Still, glob `card[0-9]*` without a `-`, or skip those entries explicitly, so that `basename(realpath(device))` is always a PCI address. Build the fake sysfs in the tests with at least one connector entry so this path is covered.
+- **N16, enum hygiene:** remove `Ongecategoriseerd` from the allowed enum if a user happens to have a category row with that name (it isn't in `categories.yaml`, but the GUI can create categories). A proposal of "Ongecategoriseerd" is not a proposal. Also take the few-shot rows only from transactions whose `categorie` is neither NULL nor `Ongecategoriseerd`.
+- **N17, cosmetic:** the Decisions list is numbered 1, 2, 3, 4, 6, 7, 8, 5 (`:120-128`). GPU-guard step 2b (`:48`) lists the messages before the procedure and repeats "not found → exit 3". Tidy both when writing the implementation log, so that the code gate can cite decisions by number without confusion.
+
+Verdict: approved with notes
