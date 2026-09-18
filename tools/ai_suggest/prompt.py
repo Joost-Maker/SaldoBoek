@@ -21,11 +21,36 @@ IBAN_RE = re.compile(
 IBAN_MIN_DIGITS = 10
 
 
-def _mask_iban(match):
-    text = match.group(0)
-    if sum(ch.isdigit() for ch in text) >= IBAN_MIN_DIGITS:
-        return "[IBAN]"
-    return text
+def _iban_spans(text):
+    """Alle IBAN-stukken, elke startpositie apart beoordeeld en daarna samengevoegd.
+
+    Met re.sub zou een afgekeurde kandidaat die vroeger begint (bv. 'AH 12 …')
+    over de start van een echte IBAN heen lopen, waardoor die IBAN nooit getest
+    wordt en heel of half in de prompt belandt.
+    """
+    spans = []
+    for start in range(len(text)):
+        match = IBAN_RE.match(text, start)
+        if match and sum(ch.isdigit() for ch in match.group(0)) >= IBAN_MIN_DIGITS:
+            spans.append((match.start(), match.end()))
+    merged = []
+    for start, end in spans:  # al gesorteerd op start
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _mask_ibans(text):
+    parts = []
+    last = 0
+    for start, end in _iban_spans(text):
+        parts.append(text[last:start])
+        parts.append("[IBAN]")
+        last = end
+    parts.append(text[last:])
+    return "".join(parts)
 
 SYSTEM_PROMPT = (
     "Je categoriseert Nederlandse banktransacties voor een huishoudboekje.\n"
@@ -45,7 +70,7 @@ def scrub(text):
     andersom zou een IBAN met rare witruimte het patroon ontlopen.
     """
     text = " ".join(str(text or "").split())
-    text = IBAN_RE.sub(_mask_iban, text)
+    text = _mask_ibans(text)
     if len(text) > MAX_TEXT:
         text = text[: MAX_TEXT - 1] + "…"
     return text

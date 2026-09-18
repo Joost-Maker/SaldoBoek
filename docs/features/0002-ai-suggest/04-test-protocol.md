@@ -59,7 +59,7 @@ Mutation check done during the build: removing the proxy block, the IBAN scrub, 
 | 2.1 | Zoekterm (amended) | named group (≥ 4 chars), model proposes anything | zoekterm = full lowercased name; for a nameless or < 4-char-name group, the model term only if it's valid (≥ 4, no digits, in every text), else empty + `zoekterm ongeldig` | High |
 | 2.2 | Collision | the proposed term also matches transactions in another category | `botsing: N transacties in <cats>`; `Ongecategoriseerd` and NULL don't count | High |
 | 2.3 | Shadow | an existing active rule already matches the group | `al gedekt door regel '<term>'` (the first rule in Categorizer order) | Normal |
-| 2.4 | IBAN scrub | descriptions with IBANs: plain, lowercase, spaced, double-spaced, tab, NBSP, dashes, dots, glued `IBANNL…`; **and** ordinary descriptions with numbers (invoice numbers, "Termijn 3 van 12", `AH to go 1418 Amsterdam`) | every IBAN masked; ordinary text left **exactly** intact (`tests/ai_suggest/test_prompt_scrub.py`) | High |
+| 2.4 | IBAN scrub | descriptions with IBANs: plain, lowercase, spaced, double-spaced, tab, NBSP, dashes, dots, glued `IBANNL…`; **and** ordinary descriptions with numbers (invoice numbers, "Termijn 3 van 12", `AH to go 1418 Amsterdam`) | every IBAN masked, also when an earlier `AH 12` / `op 18-09-2026` candidate runs into it (R6), and two IBANs in one text; ordinary text left **exactly** intact (`tests/ai_suggest/test_prompt_scrub.py`) | High |
 
 ### 3. GPU guard
 **Location:** `tools/ai_suggest/gpu.py`

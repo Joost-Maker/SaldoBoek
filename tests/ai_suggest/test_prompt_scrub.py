@@ -19,6 +19,13 @@ IBANS = [
     "Overboeking NL00.ASNB.0000.0000.05",
     "Overboeking IBANNL00TRIO0000000006 ref",
     "iban: nl00knab0000000000",
+    # Code gate R6: een eerdere kandidaat ('AH 12', 'NS 20', 'nr 12', 'op 18')
+    # mag de start van een echte IBAN niet overslaan
+    "Retour AH 12 boodschappen teruggestort NL00 ABNA 0000 0000 01",
+    "NS 20 euro retour graag naar NL00 INGB 0000 0000 01",
+    "nr 12 van Test Energie via NL00-ABNA-0000-0000-01",
+    "Huur op 18-09-2026 overgemaakt naar NL00 ABNA 0000 0000 01",
+    "Twee rekeningen NL00 ABNA 0000 0000 01 en NL00.RABO.0000.0000.02",
 ]
 
 PLAIN = [

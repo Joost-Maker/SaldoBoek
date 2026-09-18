@@ -58,9 +58,9 @@ The run was parked at the code-gate cap (review 2: R5, over-masking from the rou
 
 | Required change | Fix | Files | Regression test |
 |---|---|---|---|
-| R5: the IBAN pattern (no word boundaries) masked ordinary text, e.g. `Factuur 2026-00123 abonnement oktober` → `Factu[IBAN]` | The gate's pattern: boundaries on both sides, except a candidate directly after `IBAN` (glued form). **Plus a minimum-digit check found by the new negative test:** the gate's pattern still masked `AH to go 1418 Amsterdam` (`go 14` + `18 Amsterdam` fits the shape). A candidate is masked only if it has ≥ 10 digits; every real IBAN does (NL: 2 check + 10 account digits) | `tools/ai_suggest/prompt.py` | `tests/ai_suggest/test_prompt_scrub.py`: 10 IBAN forms masked (plain, lowercase, spaced, double-spaced, tab, NBSP, dashes, dots, glued `IBANNL…`, `iban: nl00…`), and **9 ordinary descriptions left exactly intact** (invoice numbers, "Termijn 3 van 12", "huur okt 2026 woning 12a", a 16-digit kenmerk, `Abonr.`, and pin descriptions like `AH to go 1418 Amsterdam`, `Jumbo 7042 Utrecht Centrum`) |
+| R5: the IBAN pattern (no word boundaries) masked ordinary text, e.g. `Factuur 2026-00123 abonnement oktober` → `Factu[IBAN]` | The gate's pattern: boundaries on both sides, except a candidate directly after `IBAN` (glued form). **Plus a minimum-digit check found by the new negative test:** the gate's pattern still masked `AH to go 1418 Amsterdam` (`go 14` + `18 Amsterdam` fits the shape). A candidate is masked only if it has ≥ 10 digits; every real IBAN does (NL: 2 check + 10 account digits) | `tools/ai_suggest/prompt.py` | `tests/ai_suggest/test_prompt_scrub.py`: 10 IBAN forms masked (plain, lowercase, spaced, double-spaced, tab, NBSP, dashes, dots, glued `IBANNL…`, `iban: nl00…`), and **8 ordinary descriptions left exactly intact** (invoice numbers, "Termijn 3 van 12", "huur okt 2026 woning 12a", a 16-digit kenmerk, `Abonr.`, and pin descriptions like `AH to go 1418 Amsterdam`, `Jumbo 7042 Utrecht Centrum`) |
 
-Mutation check: with the over-masking version, 7 of the 9 negative cases fail; with the fix, all 18 scrub tests pass.
+Mutation check: with the over-masking version, 7 of the 8 negative cases fail; with the fix, all 18 scrub tests pass.
 
 Test command after round 3: `.venv/bin/python -m pytest -q` → green (82 passed).
 
@@ -71,3 +71,13 @@ eGPU card0: 11.0/15.9 GiB in gebruik, model (pid 598593) 10.6 GiB resident
 8 groups, mean 2.1 s/call (first 9.6 s, then ~1 s), exit 0, no flags, no spill warning
 ```
 All 8 zoektermen are the full counterparty names (PO amendment works end to end). The review CSV is `-rw-------`. Same quality note as before: `Test Apotheek Centrum` → Boodschappen (0.95) although `Zorg` exists; the review step catches it. **AC14 passes on the final code.**
+
+## Round 3b: code gate review 3, R6 (interactive, same PO approval)
+
+| Required change | Fix | Files | Regression test |
+|---|---|---|---|
+| R6: with `re.sub`, a rejected earlier candidate (`AH 12`, `NS 20`, `nr 12`, `op 18`) could run into a spaced/dashed/dotted IBAN and hide its start, so the IBAN leaked whole (or partly, when the earlier candidate had ≥ 10 digits) | `_iban_spans()`: every start position is checked on its own with `IBAN_RE.match(text, i)`; spans with ≥ 10 digits are kept, overlapping spans are merged, then each is replaced with `[IBAN]`. The pattern is unchanged (the gate verified that changing the pattern alone can't fix this) | `tools/ai_suggest/prompt.py` | `test_prompt_scrub.py::test_iban_forms_are_masked`: 5 new cases, the gate's 4 leak strings plus two IBANs in one text; the existing `"0000" not in digits` check catches whole and partial leaks |
+
+Mutation check: with the round-3 `prompt.py`, the 5 new cases fail; with the fix, all 23 scrub tests pass. Known and privacy-safe (N7): a candidate can swallow up to 30 following characters (`Huur op 18-09-2026 … NL00 …` → `Huur [IBAN]`).
+
+Test command after round 3b: `.venv/bin/python -m pytest -q` → green (87 passed).
