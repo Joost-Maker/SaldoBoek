@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-18
 **Brief:** 00-brief.md (snapshot of `DEV/SaldoBoek Knab CSV parser.md`)
-**Revision:** 1
+**Revision:** 2
 
 ---
 
@@ -18,7 +18,7 @@ Add a `KnabParser` that turns a Knab "Transactieoverzicht" CSV into SaldoBoek's 
 - `saldoboek/core/parsers/knab_parser.py`: `KnabParser` with `parse_csv(filepath, account_type=None)` (same signature and account-type resolution as `RaboParser`: argument > constructor > interactive `_ask_account_type`). Also a module-level helper `is_knab_file(filepath) -> bool` for header detection by content.
 - `tests/test_knab_parser.py`: parser-level acceptance tests.
 - `tests/test_knab_import.py`: detection and import-into-temp-DB acceptance tests.
-- `tests/fixtures/knab/*.csv`: synthetic fixtures (BOM, all fields quoted, trailing `;`, fake IBANs `NL00KNAB0000000000` / `NL00INGB0000000000`, fake names).
+- `tests/conftest.py`: a fixture builder (`knab_csv` factory fixture) that writes synthetic Knab files into pytest's `tmp_path` at test time (BOM, all fields quoted, trailing `;`, fake IBANs `NL00KNAB0000000000` / `NL00INGB0000000000`, fake names). Row data lives as Python lists in the conftest. **No `.csv` files are committed.** `.gitignore:19` ignores `*.csv` repo-wide, and that rule is what keeps real bank exports out of git, so it stays untouched. This departs from the brief's "fixtures live under `tests/fixtures/knab/`" as a test-layout choice, which the brief's Ambiguity guidance delegates; it's logged in the implementation log.
 
 ### Files to modify
 - `saldoboek/core/importer.py`:
@@ -29,9 +29,14 @@ Add a `KnabParser` that turns a Knab "Transactieoverzicht" CSV into SaldoBoek's 
 - `saldoboek/core/parsers/__init__.py`: export `KnabParser`. **Why:** the brief says to register it wherever the others are.
 - `saldoboek/config/bank_parsers.py`: add `'KNAB': 'parse_knab_csv'`. **Why:** the brief asks for registration there too. Note: this map is legacy. Its method names don't exist on `TransactionImporter`, and it's only reached for filenames that match none of the explicit branches, which a `KNAB` filename always does. The entry is consistency only; see the Decisions note below.
 - `README.md` "🏦 Ondersteunde Banken": add `- **Knab** - Transactieoverzicht CSV`.
+- `tests/test_smoke.py`: add `KnabParser` to the import check. **Why:** it guards the `parsers/__init__.py` registration.
+
+### Deliberately untouched
+- `saldoboek/parsers/` (the legacy top-level package): it also reads `BANK_PARSERS`, but it already fails to import because its parser modules don't exist, and nothing in the live import path uses it. Leaving it alone keeps this change inside the brief; it's flagged as a backlog candidate.
+- `.gitignore` (see `tests/conftest.py` above).
 
 ### Parser design
-1. **Read:** open with `encoding="utf-8-sig"` (strips the BOM); on `UnicodeDecodeError`, retry with `cp1252`. Parse with `csv.reader(f, delimiter=";", quotechar='"')` so quoted fields are handled correctly.
+1. **Read:** open with `encoding="utf-8-sig"` and `newline=""` (strips the BOM; required for the csv module); on `UnicodeDecodeError`, retry with `cp1252`. Parse with `csv.reader(f, delimiter=";", quotechar='"')` so quoted fields are handled correctly.
 2. **Header location:** the first row containing both `CreditDebet` and `Tegenrekeninghouder`; rows above it are ignored (the preamble case). No such row → `ValueError("Geen Knab-header gevonden in <file>")`.
 3. **Trailing `;`:** the header row ends with an empty cell. Drop columns whose header name is `""` after `strip()`; this is the csv-module equivalent of pandas' `Unnamed:*`. Data rows are cut or padded to the header length.
 4. **Build DataFrame** from the rows below the header with `dtype=str`. Every cell stays a string; empty stays `""`, never NaN. Fully empty rows are skipped.
@@ -42,7 +47,7 @@ Add a `KnabParser` that turns a Knab "Transactieoverzicht" CSV into SaldoBoek's 
 9. **Output columns:** `datum, rekening, tegenrekening, naam, valuta, saldo_voor, bedrag, omschrijving, rekeningtype`, in the same order as `RaboParser`.
 10. **Error handling:** unlike Rabo/SNS, `parse_csv` does **not** wrap the whole thing in `except Exception`. Format errors are `ValueError`s and propagate (brief constraint). `FileNotFoundError` also propagates; the importer checks existence first anyway. Prints the same kind of summary as the other parsers (`✓ <file> succesvol gelezen: N transacties`, period).
 
-`is_knab_file(filepath)`: reads the first 20 csv rows with the same reader and encoding fallback, and returns `True` if any row contains both marker columns. Any read error returns `False`, so detection never crashes on foreign files.
+`is_knab_file(filepath)`: reads the first 20 csv rows with the same reader and encoding fallback, and returns `True` if any row contains both marker columns. The 20-row window is deliberately shorter than the parser's whole-file search: detection only has to recognise a Knab file cheaply, and a real preamble is a line or two. A file with its header past row 20 but named `KNAB…` is still handled by the parser via filename detection. Any read error returns `False`, so detection never crashes on foreign files.
 
 ### Config changes
 - `bank_parsers.py` entry (above). No YAML changes.
@@ -64,7 +69,7 @@ None. No schema change; Knab-only columns (`Betaalwijze`, `Type betaling`, `Mach
 | FR: detection by `KNAB` filename + by header; SNS/RABO priority unchanged | `importer.py` branches; `test_knab_import.py::test_detect_by_filename`, `test_detect_by_header`, `test_rabo_filename_still_rabo` |
 | FR: registered in `parsers/__init__.py`, `bank_parsers.py` | those files; `test_smoke.py` extended with `KnabParser` import |
 | FR: README lists Knab | `README.md` |
-| AC1: 2 rows, −6.5 / 1234.56, 2026-09-17, betaalrekening, 0.0, no `Unnamed` | `test_basic_rows` on `knab_basic.csv` |
+| AC1: 2 rows, −6.5 / 1234.56, 2026-09-17, betaalrekening, 0.0, no `Unnamed` | `test_basic_rows` on a `knab_csv`-generated basic file |
 | AC2: `"1.234,56"` Afschrijvingen → −1234.56 | `test_thousands_separator` |
 | AC3: `Onbekend` → `ValueError` containing `Onbekend`; import stores 0 | `test_unknown_creditdebet_raises`, `test_import_unknown_creditdebet_stores_nothing` |
 | AC4: empty tegenrekening → `""`, empty omschrijving → naam, no NaN/"nan" | `test_empty_fields` |
@@ -96,7 +101,8 @@ None. No schema change; Knab-only columns (`Betaalwijze`, `Type betaling`, `Mach
 
 ## Test scope
 
-- New pytest suite files as mapped above; one or more tests per AC. All fixtures are synthetic, and each is created as a file under `tests/fixtures/knab/` or written into `tmp_path` from a shared template. The BOM and trailing `;` are present in every fixture.
+- New pytest suite files as mapped above; one or more tests per AC. All fixtures are synthetic and generated into `tmp_path` by the `knab_csv` factory in `tests/conftest.py`. The BOM and trailing `;` are present in every fixture.
+- Every test passes an explicit `account_type` (`"betaalrekening"`). With `None`, the parser falls back to an interactive `input()` prompt, which would hang under pytest.
 - Import tests use `DatabaseManager(db_path=<tmp_path Path>)`, `Categorizer(db, 1)` and `TransactionImporter(cat, db, 1)`, and count rows in `transacties` afterwards.
 - Bug hunt (headless, no browser UI): run the import path with extra hand-made synthetic edge files: CRLF line endings, a file with only a header, whitespace around `CreditDebet`, a mixed debit/credit month, and a non-Knab `;` file named `export.csv` (must not be detected as Knab and must raise the existing "Onbekend bankformaat").
 
@@ -105,3 +111,9 @@ None. No schema change; Knab-only columns (`Betaalwijze`, `Type betaling`, `Mach
 ## Open questions for PO
 
 (none)
+
+---
+
+## Revision notes
+
+- Rev 2 (after `02-spec-review.md`, changes requested): fixtures are now generated in `tmp_path` by `tests/conftest.py` instead of committed `.csv` files, because `.gitignore` ignores `*.csv` and that rule protects real bank data. `tests/test_smoke.py` is added to "Files to modify". The legacy `saldoboek/parsers/` and `.gitignore` are listed as deliberately untouched. Folded in the gate's build notes: `newline=""`, explicit `account_type` in tests, and the reason for the 20-row detection window.
