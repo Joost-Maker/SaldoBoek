@@ -267,3 +267,140 @@ AI_SUGGEST_API_KEY=<given> .venv/bin/python -m tools.ai_suggest --db /tmp/tmp.H5
 4. 🟡 E3: check the output directory is writable before the GPU guard; don't lose a finished run to a write error.
 5. 🟡 E1: flag hits on other uncategorised counterparties and duplicate/overlapping zoektermen across rows (a candidate for the sign-off package, possibly together with 0003 apply).
 6. 🟢 F1 / E4 / E5: clamp-and-flag `zekerheid` > 1; sanitise the printed name; hide `--sysfs-root` like `--proc-root`.
+
+---
+
+## Round 2
+
+**Date (UTC):** 2026-09-18T10:08:33Z
+**Scope:** scoped re-hunt after `06-fixes.md` round 1 (E2 fix `check_output`) and round 1b (PO amendment: zoekterm = full counterparty name).
+**Re-run:** (1) E2, all `--out` variants; (2) the name-first zoekterm rule and the collision flag; (3) the offline High-priority protocol cases 1.1, 1.3, 1.4, 2.2, 2.4, 3.1, 3.2, 4.1, 4.3 and the high-stakes table.
+**Not re-run:** 1.2, 1.5, 1.6, 2.1 (superseded by the amendment and covered by (2)), 2.3, 3.3, 4.2 and section 5 (AC14 was done by the orchestrator, see `06-fixes.md`). The F2 IBAN variants were not re-probed; only the protocol forms of 2.4 were.
+
+### Environment
+- Driver: headless `.venv/bin/python` (3.12.3). Scratch harness `h.py` plus case scripts in `mktemp -d` (`/tmp/tmp.fgb9p3xrp1`, outside the repo). The harness imports `SyntheticDB`, `StubLLM`, `FakeHost` and `read_review` from `tests/ai_suggest/conftest.py` and calls `tools.ai_suggest.__main__.main([...])` with a fake sysfs and proc. It never touches the real model server, sysfs-based GPU or any real DB.
+- App version: `bc65e60` on `feat/0002-ai-suggest`.
+- Baseline: `.venv/bin/python -m pytest -q` → `60 passed` (before and after the hunt). `git diff dev...HEAD -- saldoboek` → empty.
+- Test data: synthetic only (`Test …` names, `NL00…` IBANs).
+
+### R2.1 E2 re-test: `--out` must never modify the database
+Each variant used a fresh synthetic DB. Recorded: SHA-256 before and after, whether the DB still opens as SQLite, exit code, and the requests the stub received.
+
+| `--out` variant | Exit | Stub requests | DB SHA unchanged | Result |
+|---|---|---|---|---|
+| same absolute path | 1 | 0 | ✅ | `--out mag niet de database zijn` |
+| same path relative (cwd = data dir) / `--db` relative + `--out` absolute | 1 | 0 | ✅ | refused |
+| `data/../data/database.db`, `data/.//database.db`, `database.db/`, `database.db/.`, `database.db/../database.db` | 1 | 0 | ✅ | refused |
+| symlink `link.csv → db`, chain `a.csv → c.csv → db`, symlinked dir `ldir/database.db`, symlink + `..` (physical resolution), `/proc/self/root/<db>` | 1 | 0 | ✅ | refused (realpath) |
+| hardlink `hard.csv` / `HARD.CSV` to the DB inode | 0 | 1 | ✅ | accepted, but `os.replace` swaps the directory entry, so the DB inode is untouched and still valid SQLite. OK |
+| new `REVIEW.CSV` (uppercase) | 0 | 1 | ✅ | accepted, OK |
+| `<db>-journal`, `<db>-wal`, `<db>-shm` | 1 | 0 | ✅ | `--out moet een .csv-bestand zijn` |
+| the data directory, with or without trailing `/` | 1 | 0 | ✅ | `.csv` check refuses |
+| `review.txt`, `review.csv.db` | 1 | 0 | ✅ | `.csv` check refuses |
+| `<db>.csv` (new file), `--out ''` (→ default path) | 0 | 1 | ✅ | OK |
+| existing directory `map.csv`; `database.db/x.csv` | traceback (`IsADirectoryError` / `NotADirectoryError`) | 1 | ✅ | DB safe. This is backlog E3 (crash after the model calls; a `map.csv.tmp` is left behind), unchanged |
+| **`<out>.tmp` is a symlink or hardlink to the DB** | **0** | 1 | **❌** | **DB overwritten with the CSV**, see R2-1 |
+| **`--db …/review.csv.tmp --out …/review.csv`** | **0** | 1 | **❌** | the DB file is renamed onto `review.csv` (with CSV content), see R2-1 |
+
+All refusals happen before the eGPU check, before the DB is opened, and with 0 stub requests ✅. The round-1 E2 reproduction (the same path) is **fixed**, including the relative, `..`, symlink and `/proc/self/root` forms.
+
+#### R2-1: the temp file `<out>.tmp` isn't covered by the E2 check; a link there overwrites the DB · 🟡 Medium
+- **Tested:** (a) `ln -s <tmp>/data/database.db <tmp>/r.csv.tmp`, then `--out <tmp>/r.csv`; (b) the same with `os.link` (hardlink) to `r2.csv.tmp`; (c) the DB renamed to `data/review.csv.tmp`, run with `--db data/review.csv.tmp --out data/review.csv`.
+- **Expected:** the database is never modified (brief: read-only; E2 fix intent).
+- **Actual:** (a) exit 0, no warning, `database.db` now starts with `b'\xef\xbb\xbfgroep;sleutel;naa'`, and sqlite reports `file is not a database`. The symlink itself is renamed to `r.csv` (still pointing at the destroyed DB). (b) the same, through the shared inode. (c) exit 0, and `review.csv.tmp` (the DB) no longer exists because the CSV was written into it and renamed away.
+- **Why:** `check_output()` checks only `realpath(--out)`. `review.write_review` then does `open(f"{path}.tmp", "w")`, which follows symlinks and truncates an existing inode, and only then calls `os.replace`.
+- **Severity rationale:** the outcome is the same total DB loss as E2. The precondition is a pre-existing link (or a DB literally named `<out>.tmp`), which a copy-paste slip won't produce. A leftover `.tmp` from a crashed run is a regular file and harmless. So this is 🟡, not 🟠. The fix is small: create the temp file with `tempfile.mkstemp(dir=os.path.dirname(out), suffix=".tmp")` (O_EXCL, never follows or reuses an existing name), or `os.open(..., O_CREAT|O_EXCL|O_NOFOLLOW)`.
+- **Console errors:** none (silent success) · **Network:** 1 request to the stub (loopback)
+- **Reproduction:** `cd /tmp/tmp.fgb9p3xrp1 && /home/joost/Code/SaldoBoek/.venv/bin/python e2.py` (last two lines) / `e2b.py`
+- **Location:** `tools/ai_suggest/review.py::write_review`, `tools/ai_suggest/__main__.py::check_output`
+
+### R2.2 Name-first zoekterm (PO amendment)
+**Named groups (≥ 4 chars): the model's term is ignored ✅.** For `Test Bakker` the CSV zoekterm was `test bakker` with no flag for every model term tried: `woning`, `abonr.4163`, `""`, `"   "`, `TEST BAKKER`, `Test Bakker`, `bakker`, `test bakker extra`, a 300-char `xxx…`, `ns`, `Pinbetaling`.
+
+| Case | Input | CSV zoekterm / vlaggen | |
+|---|---|---|---|
+| case variants in one group | `Test Bakker`, `TEST BAKKER`, `test bakker` | 1 group, `test bakker` | ✅ |
+| edge whitespace in one group | `"  Test Bakker"`, `"Test Bakker "`, `"\tTest Bakker\n"` | 1 group, `test bakker` | ✅ |
+| internal double space | `Test  Bakker` vs `Test Bakker` | 2 groups, `test  bakker` / `test bakker` (each matches only its own text, as the Categorizer would) | ✅ (they look identical in LibreOffice, cosmetic) |
+| tab/newline inside naam | `Test\tBakker`, `Test Naam\nTweede Regel` | zoekterm keeps the control char; the CSV quotes it correctly | ✅ (E4-class, unchanged) |
+| length 3 (`KPN`), model `kpn` | too short | `""` + `zoekterm ongeldig` | ✅ |
+| length 3, model `mobiel abonnement` / `kpn mobiel` (spans naam + omschrijving) | valid in every text | used | ✅ per amendment |
+| length 3, model valid in only some texts | `abonnement` vs text `toestel` | `""` + `zoekterm ongeldig` | ✅ |
+| `" NS "` → `ns` (2) | model `ns reizen` | `ns reizen` | ✅ |
+| `"A B "` → `a b` (3), model `""` | | `""` + `zoekterm ongeldig` | ✅ |
+| `" ab c "` → `ab c` (exactly 4) | | `ab c` | ✅ (boundary is ≥ 4) |
+| `Hema` (exactly 4) | | `hema` | ✅ per amendment |
+| `1234` (digits only) | | `1234` | ✅ per amendment (digits allowed) |
+| nameless, model `"  MAANDHUUR "` | | `maandhuur` | ✅ |
+| nameless, model `termijn 12` | digits | `""` + `zoekterm ongeldig` | ✅ |
+| nameless, model `kpn ` (trailing space) on short naam `KPN` | strips to 3 | `""` + `zoekterm ongeldig` | ✅ |
+
+**Collision flag with name-derived terms:**
+
+| Case | Flag | |
+|---|---|---|
+| `Test Garage` (uncat.) vs `Test Garage Onderdelen` in Auto, proposed Boodschappen (amended AC6) | `botsing: 1 transacties in Auto` | ✅ |
+| the same with `TEST GARAGE ONDERDELEN` / `REMBLOKKEN` (case) | `botsing: 1 transacties in Auto` | ✅ |
+| `Hema` vs categorised `Test Schema Drukkerij` (Abonnementen) | `botsing: 1 transacties in Abonnementen` | ✅ |
+| naam `Test Huur` inside another counterparty's omschrijving (`Vergoeding test huur`, Salaris) | `botsing: 1 transacties in Salaris` | ✅ |
+| `N.V.` vs categorised `Test Energie N.V.`; `....` vs `Test Punt....` in Auto | `botsing: 1 transacties in …` | ✅ |
+| same counterparty's own history in a different category (2× Boodschappen, proposed Auto) | `botsing: 2 transacties in Boodschappen` | ✅ |
+| other counterparty, same category | no flag | ✅ |
+| `Test  Garage` (double space) in Auto vs term `test garage` | no flag (correct: the Categorizer wouldn't match it either) | ✅ |
+
+#### R2-2: a named group loses its valid category when the model's (now unused) zoekterm is null/non-string · 🟢 Low
+- **Tested:** named group `Test B4`, stub answers `{"categorie": "Auto", "zoekterm": null, "zekerheid": 0.4}`.
+- **Expected (amendment):** the zoekterm is the name "whatever the model proposes". The category `Auto` is valid.
+- **Actual:** row `categorie ''`, `zoekterm ''`, `vlaggen 'model-fout'` (`zoekterm ontbreekt`). An empty-string term works fine; only a missing/non-string one is rejected.
+- **Why Low:** the JSON schema marks `zoekterm` as a required string and llama-server enforces it through GBNF, so the real model can't produce this. It's a consistency gap left by the amendment in `llm.py` (lines 115–117).
+- **Reproduction:** `cd /tmp/tmp.fgb9p3xrp1 && …/.venv/bin/python reg2.py` (first line)
+- **Location:** `tools/ai_suggest/llm.py` (response validation)
+
+**Backlog E1, not worse, not counted.** The amendment removes generic model words for named groups. What remains, for the sign-off and the 0003 brief:
+- **Prefix overlap inside one review file isn't flagged.** When `Test Garage` (→ Auto) and `Test Garage Onderdelen` (→ Boodschappen) are *both* uncategorised, both rows come out with no flag. As rules in 0003 (first match wins, insertion order; rows are sorted by `aantal`), `test garage` would take the Onderdelen transactions too. Same for `Hema` vs uncategorised `Test Schema Drukkerij`. The collision check still skips `Ongecategoriseerd`, which is the E1 root cause, now deterministic.
+- **Short-name and nameless groups can still get a generic model term.** `KPN` plus model `abonnement` → zoekterm `abonnement`, no flag (allowed by the amendment's "valid model term" branch).
+- **The sign split gives two rows with the same zoekterm and different categories** (`test vriend` → Salaris / Abonnementen), unflagged. Already noted as N20/N21.
+- **PO note (not a bug):** name-first gives payment-processor or generic names (e.g. a `Stichting … Payments`-type counterparty, or a 4-char name like `hema` ⊂ "schema") a single rule for everything behind that name. The collision flag catches overlap only with *categorised* history.
+
+### R2.3 Regression: offline High-priority cases
+| # | Result | Notes |
+|---|---|---|
+| 1.1 | ✅ | exit 0, 2 calls; rows `test streaming b.v.` 3 `-29,97` / `test bakker` 2 `-9,00`; zoekterm = sleutel; SHA unchanged |
+| 1.3 | ✅ | stdout `[1/2] (geen naam) (2×)…`, no description text on stdout; `""` + `"   "` naam in one group; `NULL` naam separate; `naam` empty; stub term invalid → `zoekterm ongeldig` |
+| 1.4 | ✅ | invented category / free text / missing keys / HTTP 500 → `model-fout` with the matching reason, and an abort after 4 in a row (exit 1, partial CSV). Second run: wrong-sign `Salaris` and a JSON array → `model-fout`; `zekerheid "hoog"` → `0,00` + `zekerheid ongeldig`; recovery OK. Null zoekterm → R2-2 |
+| 2.2 | ✅ | stub `test` ignored → `test bakker`; `botsing: 2 transacties in Auto, Salaris`; `Ongecategoriseerd`, NULL and same-category rows not counted |
+| 2.4 | ✅ | the protocol forms (plain, lowercase, spaced lower/upper, BE, `IBAN:`, `/IBAN/…/`), few-shot and a naam containing an IBAN: 0 AC13-regex hits and 0 loose hits across 7 request bodies. (F2 variants not re-probed; backlog) |
+| 3.1 | ✅ | no eGPU and a 6 GiB card → exit 2, `eGPU niet aangesloten — geen CPU/iGPU-fallback`, 0 requests, no CSV |
+| 3.2 | ✅ | the card full from another process, model 0 GiB → exit 3 `model draait niet op de eGPU (0.0 GiB resident)` after 1 request, no CSV; the card at 2 GiB → exit 3 |
+| 4.1 | ✅ | SHA and directory listing unchanged (no `-journal`/`-wal`/`-shm`); INSERT / CREATE / PRAGMA through `ReadOnlyDB` → `attempt to write a readonly database` |
+| 4.3 | ✅ | 10 non-local endpoints refused before the DB (`endpoint moet lokaal zijn…`), `:99999` → `ongeldige poort`; proxy env to `127.0.0.1:9` ignored (2 requests reached the stub); 307 → `model-fout (redirect geweigerd (307))`; strace: only 4 connects, all to `127.0.0.1:<stub>`, no IPv6 or other hosts |
+| High-stakes | ✅ | `choose_zoekterm('abonr.4163', 'Test Streaming B.V.')` → `('test streaming b.v.', [])`; amended AC6 → `test garage`, `['botsing: 1 transacties in Auto']`; sleutel and type rows as in round 1 |
+
+Console: no tracebacks except the intended E3-class ones noted in R2.1. Network: loopback only.
+
+### Exploratory pass (round 2)
+**Timebox:** ~10 min · **Focus:** `--out` path tricks beyond the list (trailing `/`, `/.`, paths *under* the DB file, `/proc/self/root`), the temp-file side door (→ R2-1), and re-running onto an existing review file.
+
+#### [exploratory] R2-3: re-running with the same explicit `--out` silently overwrites a reviewed CSV · 🟢 Low
+- **Tested:** run with `--out <tmp>/review.csv`, set `akkoord` to `j` in the file, then run again with the same `--out`.
+- **Actual:** exit 0, the file is replaced, `akkoord` is `''` again, and nothing warns that Joost's marks are gone.
+- **Why Low:** the default output path is timestamped, so this needs an explicit `--out`. Overwriting is ordinary CLI behaviour, but the file holds manual review work that 0003 consumes. Could refuse an existing `--out` unless `--force` is given.
+- **Location:** `tools/ai_suggest/__main__.py::check_output` / `review.write_review`
+
+### Summary (round 2)
+| # | Issue | Severity | Location |
+|---|---|---|---|
+| R2-1 | `<out>.tmp` isn't checked: a symlink or hardlink there (or a DB named `<out>.tmp`) makes `write_review` write the CSV into the DB (exit 0, silent) | 🟡 Medium | `review.py::write_review`, `__main__.py::check_output` |
+| R2-2 | Named group with a null/non-string model zoekterm → `model-fout` and the category is lost, though the term is unused (GBNF prevents it live) | 🟢 Low | `llm.py` response validation |
+| R2-3 | Re-run with the same `--out` overwrites a reviewed CSV without warning | 🟢 Low | `__main__.py`, `review.py` |
+
+**Headline counts (round 2):** 0 🔴 · 0 🟠 · 1 🟡 · 2 🟢
+**Resolved from round 1:** E2 (🟠): same path, relative/absolute, `..`, symlinks (incl. chains and symlinked dirs), `/proc/self/root`, `-journal`/`-wal`/`-shm`, directories and non-`.csv` suffixes are all refused before the eGPU check or any request; hardlinks and uppercase `.CSV` are safe because of `os.replace`.
+**Backlog unchanged (not worse):** E1 (remaining forms listed in R2.2), E3 (directory-named `.csv` / path under a file still crashes after the model calls), F1, F2 (not re-probed), E4, E5.
+**Protocol coverage:** the scoped cases listed in the header. Section 5 and the non-High cases were not re-run.
+
+### Recommended next steps (round 2)
+1. 🟡 R2-1: create the temp file with `tempfile.mkstemp(dir=<out dir>)` (O_EXCL) instead of `open(out + ".tmp", "w")`; optionally also refuse when `os.path.samefile(out, db)` holds.
+2. 🟢 R2-2: for a named group, don't reject the answer over a missing zoekterm.
+3. 🟢 R2-3: refuse an existing `--out` without `--force` (sign-off package).
+4. E1 residue (in-file prefix overlap, generic terms for short and nameless groups, sign-split duplicates) goes to the 0003 brief.
